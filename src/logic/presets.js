@@ -15,6 +15,14 @@ export const PRESETS = [
 
 export const SHIP_PRESETS = [
 	{
+		name: "Fighter",
+		efficiency: 15,
+		dryMass: 15,
+		fuelCapacity: 10,
+		accel: 12,
+		flip: 10,
+	},
+	{
 		name: "Interceptor",
 		efficiency: 15,
 		dryMass: 150,
@@ -39,6 +47,22 @@ export const SHIP_PRESETS = [
 		flip: 120,
 	},
 	{
+		name: "Destroyer",
+		efficiency: 17,
+		dryMass: 5000,
+		fuelCapacity: 2000,
+		accel: 5,
+		flip: 120,
+	},
+	{
+		name: "Cruiser",
+		efficiency: 23,
+		dryMass: 7000,
+		fuelCapacity: 4000,
+		accel: 4,
+		flip: 120,
+	},
+	{
 		name: "Freighter",
 		efficiency: 30,
 		dryMass: 5000,
@@ -48,11 +72,11 @@ export const SHIP_PRESETS = [
 	},
 	{
 		name: "Torchship",
-		efficiency: 25,
+		efficiency: 45,
 		dryMass: 800,
 		fuelCapacity: 4000,
-		accel: 1.5,
-		flip: 120,
+		accel: 1,
+		flip: 600,
 	},
 	{
 		name: "Gateship",

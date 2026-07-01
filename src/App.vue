@@ -103,6 +103,7 @@ const calculate = () => {
 
 		if (maxDistAccelOnly > dMeters) {
 			tCoastSeconds = 0;
+			coastingTime.value = 0;
 		} else {
 			const xRemainder = dMeters - maxDistAccelOnly;
 			const v1 = C * Math.tanh((aMs2 * tau1) / C);
