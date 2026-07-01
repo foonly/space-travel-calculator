@@ -33,10 +33,13 @@ const efficiency = ref(10); // % of c
 const dryMass = ref(1000);
 const fuelCapacity = ref(2000);
 const autoCoast = ref(false);
+const roundTrip = ref(false);
 
 const results = ref(null);
 const chartCanvas = ref(null);
+const fuelChartCanvas = ref(null);
 let chart = null;
+let fuelChart = null;
 
 const calculate = () => {
 	const dValue = distance.value || 0;
@@ -50,10 +53,11 @@ const calculate = () => {
 		(coastingTime.value || 0) * UNITS.TIME[coastingTimeUnit.value].factor;
 
 	if (autoCoast.value) {
+		const segments = roundTrip.value ? 4 : 2;
 		const maxTotalProperAccelTime =
 			(vExhaust / aMs2) *
 			Math.log((dryMass.value + fuelCapacity.value) / dryMass.value);
-		const tau1 = maxTotalProperAccelTime / 2;
+		const tau1 = maxTotalProperAccelTime / segments;
 
 		const maxDistAccelOnly =
 			2 * (C ** 2 / aMs2) * (Math.cosh((aMs2 * tau1) / C) - 1) +
@@ -61,19 +65,10 @@ const calculate = () => {
 
 		if (maxDistAccelOnly > dMeters) {
 			tCoastSeconds = 0;
-			coastingTime.value = 0;
 		} else {
 			const xRemainder = dMeters - maxDistAccelOnly;
 			const v1 = C * Math.tanh((aMs2 * tau1) / C);
 			tCoastSeconds = xRemainder / v1;
-
-			// Switch unit automatically based on magnitude
-			if (tCoastSeconds > 31557600) coastingTimeUnit.value = "Y";
-			else if (tCoastSeconds > 86400) coastingTimeUnit.value = "D";
-			else if (tCoastSeconds > 3600) coastingTimeUnit.value = "H";
-			else if (tCoastSeconds > 60) coastingTimeUnit.value = "M";
-			else coastingTimeUnit.value = "S";
-
 			coastingTime.value =
 				tCoastSeconds / UNITS.TIME[coastingTimeUnit.value].factor;
 		}
@@ -87,12 +82,19 @@ const calculate = () => {
 			flipTime.value,
 		);
 
+		// Override mass ratio with user efficiency and segments
+		const segments = roundTrip.value ? 4 : 2;
 		results.value.massRatio = Math.exp(
-			(aMs2 * (2 * results.value.accelPhase.properTime)) / vExhaust,
+			(aMs2 * (segments * results.value.accelPhase.properTime)) / vExhaust,
 		);
 		results.value.fuelUsed = dryMass.value * (results.value.massRatio - 1);
 		results.value.fuelWarning =
 			results.value.fuelUsed > fuelCapacity.value + 0.01;
+
+		if (roundTrip.value) {
+			results.value.totalProperTime *= 2;
+			results.value.totalCoordTime *= 2;
+		}
 
 		updateChart();
 	} catch (e) {
@@ -118,49 +120,90 @@ const setShipPreset = (ship) => {
 };
 
 const updateChart = () => {
-	if (!chartCanvas.value || !results.value) return;
+	if (!chartCanvas.value || !fuelChartCanvas.value || !results.value) return;
 
 	const res = results.value;
-	const data = [];
+	const vData = [];
+	const fData = [];
 	const labels = [];
 	const a =
 		acceleration.value * UNITS.ACCELERATION[accelerationUnit.value].factor;
+	const effFraction = efficiency.value / 100;
+	const vExhaust = effFraction * C;
 
-	const accelSteps = 50;
-	for (let i = 0; i <= accelSteps; i++) {
-		const t = (i / accelSteps) * res.accelPhase.coordTime;
-		const v = (a * t) / Math.sqrt(1 + ((a * t) / C) ** 2);
-		labels.push(t);
-		data.push(v / 1000);
-	}
+	const startFuel = fuelCapacity.value;
+	const totalBurnTimeProper =
+		(roundTrip.value ? 4 : 2) * res.accelPhase.properTime;
+	const massAtStart =
+		dryMass.value * Math.exp((a * totalBurnTimeProper) / vExhaust);
 
-	if (res.flipPhase.coordTime > 0) {
-		labels.push(res.accelPhase.coordTime + res.flipPhase.coordTime);
-		data.push(res.maxSpeed / 1000);
-	}
+	let currentMass = massAtStart;
+	let currentTimeCoord = 0;
 
-	if (res.coastPhase.coordTime > 0) {
-		labels.push(
-			res.accelPhase.coordTime +
-				res.flipPhase.coordTime +
-				res.coastPhase.coordTime,
-		);
-		data.push(res.maxSpeed / 1000);
-	}
+	const addPoint = (tCoord, v, m) => {
+		labels.push(tCoord);
+		vData.push(v / 1000);
+		// Fuel remaining in tank (accounting for initial fuel used)
+		const fuelUsedSoFar = massAtStart - m;
+		fData.push(startFuel - fuelUsedSoFar);
+	};
 
-	const tBase =
-		res.accelPhase.coordTime +
-		res.flipPhase.coordTime +
-		res.coastPhase.coordTime;
-	for (let i = 1; i <= accelSteps; i++) {
-		const tLocal = (i / accelSteps) * res.decelPhase.coordTime;
-		const tReverse = res.decelPhase.coordTime - tLocal;
-		const v = (a * tReverse) / Math.sqrt(1 + ((a * tReverse) / C) ** 2);
-		labels.push(tBase + tLocal);
-		data.push(v / 1000);
+	const generateLeg = (startTimeCoord, startMass) => {
+		let m = startMass;
+		let tBase = startTimeCoord;
+
+		// Accel
+		const steps = 50;
+		for (let i = 0; i <= steps; i++) {
+			const stepFraction = i / steps;
+			const tCoord = stepFraction * res.accelPhase.coordTime;
+			const tProper = stepFraction * res.accelPhase.properTime;
+			const v = (a * tCoord) / Math.sqrt(1 + ((a * tCoord) / C) ** 2);
+			const mNow = startMass * Math.exp((-a * tProper) / vExhaust);
+			addPoint(tBase + tCoord, v, mNow);
+			m = mNow;
+		}
+
+		tBase += res.accelPhase.coordTime;
+		const massAfterAccel = m;
+
+		// Flip
+		if (res.flipPhase.coordTime > 0) {
+			tBase += res.flipPhase.coordTime;
+			addPoint(tBase, res.maxSpeed, massAfterAccel);
+		}
+
+		// Coast
+		if (res.coastPhase.coordTime > 0) {
+			tBase += res.coastPhase.coordTime;
+			addPoint(tBase, res.maxSpeed, massAfterAccel);
+		}
+
+		// Decel
+		for (let i = 1; i <= steps; i++) {
+			const stepFraction = i / steps;
+			const tCoord = stepFraction * res.decelPhase.coordTime;
+			const tProper = stepFraction * res.decelPhase.properTime;
+			const tReverse = res.decelPhase.coordTime - tCoord;
+			const v = (a * tReverse) / Math.sqrt(1 + ((a * tReverse) / C) ** 2);
+			const mNow = massAfterAccel * Math.exp((-a * tProper) / vExhaust);
+			addPoint(tBase + tCoord, v, mNow);
+			m = mNow;
+		}
+
+		return { endCoord: tBase + res.decelPhase.coordTime, endMass: m };
+	};
+
+	// Outbound
+	const leg1 = generateLeg(0, massAtStart);
+
+	// Return
+	if (roundTrip.value) {
+		generateLeg(leg1.endCoord, leg1.endMass);
 	}
 
 	if (chart) chart.destroy();
+	if (fuelChart) fuelChart.destroy();
 
 	const maxT = labels[labels.length - 1];
 	let timeUnit = "s";
@@ -176,6 +219,7 @@ const updateChart = () => {
 		divisor = 3600;
 	}
 
+	// Velocity Chart
 	chart = new Chart(chartCanvas.value, {
 		type: "line",
 		data: {
@@ -183,7 +227,7 @@ const updateChart = () => {
 			datasets: [
 				{
 					label: "Velocity (km/s)",
-					data: data,
+					data: vData,
 					borderColor: "#38bdf8",
 					backgroundColor: "rgba(56, 189, 248, 0.1)",
 					fill: true,
@@ -231,6 +275,64 @@ const updateChart = () => {
 			},
 		},
 	});
+
+	// Fuel Chart
+	fuelChart = new Chart(fuelChartCanvas.value, {
+		type: "line",
+		data: {
+			labels: labels,
+			datasets: [
+				{
+					label: "Fuel Remaining (t)",
+					data: fData,
+					borderColor: "#f87171",
+					backgroundColor: "rgba(248, 113, 113, 0.1)",
+					fill: true,
+					pointRadius: 0,
+					borderWidth: 2,
+					tension: 0.1,
+				},
+			],
+		},
+		options: {
+			responsive: true,
+			maintainAspectRatio: false,
+			scales: {
+				x: {
+					type: "linear",
+					display: true,
+					title: {
+						display: true,
+						text: `Time (${timeUnit})`,
+						color: "#94a3b8",
+					},
+					ticks: {
+						color: "#64748b",
+						callback: (val) => (val / divisor).toFixed(1),
+					},
+					grid: { color: "rgba(255,255,255,0.05)" },
+				},
+				y: {
+					display: true,
+					title: { display: true, text: "Fuel (t)", color: "#94a3b8" },
+					ticks: { color: "#64748b" },
+					grid: { color: "rgba(255,255,255,0.05)" },
+					beginAtZero: true,
+					max: fuelCapacity.value,
+				},
+			},
+			plugins: {
+				legend: { display: false },
+				tooltip: {
+					callbacks: {
+						label: (context) => `Fuel: ${context.parsed.y.toLocaleString()} t`,
+						title: (items) =>
+							`Time: ${(items[0].parsed.x / divisor).toFixed(2)} ${timeUnit}`,
+					},
+				},
+			},
+		},
+	});
 };
 
 watch(
@@ -246,6 +348,7 @@ watch(
 		dryMass,
 		fuelCapacity,
 		autoCoast,
+		roundTrip,
 	],
 	calculate,
 );
@@ -384,18 +487,33 @@ onMounted(() => {
 								/>
 							</div>
 						</div>
-						<div class="flex items-center gap-2">
-							<input
-								type="checkbox"
-								v-model="autoCoast"
-								id="autoCoast"
-								class="rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-0"
-							/>
-							<label
-								for="autoCoast"
-								class="text-xs text-slate-400 cursor-pointer"
-								>Auto-calculate coasting based on fuel</label
-							>
+						<div class="flex flex-col gap-2">
+							<div class="flex items-center gap-2">
+								<input
+									type="checkbox"
+									v-model="autoCoast"
+									id="autoCoast"
+									class="rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-0"
+								/>
+								<label
+									for="autoCoast"
+									class="text-xs text-slate-400 cursor-pointer"
+									>Auto-calculate coasting</label
+								>
+							</div>
+							<div class="flex items-center gap-2">
+								<input
+									type="checkbox"
+									v-model="roundTrip"
+									id="roundTrip"
+									class="rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-0"
+								/>
+								<label
+									for="roundTrip"
+									class="text-xs text-slate-400 cursor-pointer"
+									>Round-trip (no refueling)</label
+								>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -464,7 +582,8 @@ onMounted(() => {
 					>
 						<div>
 							<p class="text-slate-400 text-sm mb-1 flex items-center gap-2">
-								<Clock class="w-4 h-4" /> Outside Time
+								<Clock class="w-4 h-4" />
+								{{ roundTrip ? "Total Round-Trip" : "Outside Time" }}
 							</p>
 							<h2 class="text-3xl font-bold text-white">
 								{{ formatDuration(results.totalCoordTime) }}
@@ -480,7 +599,8 @@ onMounted(() => {
 					>
 						<div>
 							<p class="text-blue-400 text-sm mb-1 flex items-center gap-2">
-								<Rocket class="w-4 h-4" /> Ship Time
+								<Rocket class="w-4 h-4" />
+								{{ roundTrip ? "Total Ship Time" : "Ship Time" }}
 							</p>
 							<h2 class="text-3xl font-bold text-blue-100">
 								{{ formatDuration(results.totalProperTime) }}
@@ -557,10 +677,23 @@ onMounted(() => {
 					</div>
 				</div>
 
-				<div
-					class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64"
-				>
-					<canvas ref="chartCanvas"></canvas>
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					<div
+						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64"
+					>
+						<div class="text-xs text-slate-500 mb-2 uppercase tracking-tighter">
+							Velocity Profile
+						</div>
+						<canvas ref="chartCanvas"></canvas>
+					</div>
+					<div
+						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64"
+					>
+						<div class="text-xs text-slate-500 mb-2 uppercase tracking-tighter">
+							Fuel Consumption
+						</div>
+						<canvas ref="fuelChartCanvas"></canvas>
+					</div>
 				</div>
 
 				<div
