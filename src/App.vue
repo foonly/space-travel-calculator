@@ -738,10 +738,7 @@ onMounted(() => {
 
 			<!-- Results -->
 			<div class="lg:col-span-2 space-y-8">
-				<div
-					v-if="results"
-					class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
-				>
+				<div v-if="results" class="grid grid-cols-1 md:grid-cols-2 gap-4">
 					<div
 						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 flex flex-col justify-between"
 					>
@@ -861,7 +858,7 @@ onMounted(() => {
 					</div>
 
 					<div
-						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 col-span-1 md:col-span-2 lg:col-span-4"
+						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 col-span-1 md:col-span-2"
 					>
 						<div class="flex items-center justify-between mb-4">
 							<p class="text-slate-400 text-sm flex items-center gap-2">
