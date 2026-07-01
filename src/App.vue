@@ -3,13 +3,12 @@ import { ref, computed, watch, onMounted } from "vue";
 import {
 	calculateTravel,
 	UNITS,
-	PRESETS,
-	SHIP_PRESETS,
 	formatDuration,
 	formatDistance,
 	C,
 	G,
 } from "./logic/physics";
+import { PRESETS, SHIP_PRESETS } from "./logic/presets";
 import {
 	Rocket,
 	Clock,
@@ -32,6 +31,9 @@ const flipTime = ref(120);
 const efficiency = ref(10); // % of c
 const dryMass = ref(1000);
 const fuelCapacity = ref(2000);
+const cargoMass = ref(0);
+const waitTime = ref(0);
+const waitTimeUnit = ref("D");
 const autoCoast = ref(false);
 const roundTrip = ref(false);
 
@@ -48,6 +50,7 @@ const calculate = () => {
 		acceleration.value * UNITS.ACCELERATION[accelerationUnit.value].factor;
 	const effFraction = efficiency.value / 100;
 	const vExhaust = effFraction * C;
+	const totalDryMass = dryMass.value + cargoMass.value;
 
 	let tCoastSeconds =
 		(coastingTime.value || 0) * UNITS.TIME[coastingTimeUnit.value].factor;
@@ -56,7 +59,7 @@ const calculate = () => {
 		const segments = roundTrip.value ? 4 : 2;
 		const maxTotalProperAccelTime =
 			(vExhaust / aMs2) *
-			Math.log((dryMass.value + fuelCapacity.value) / dryMass.value);
+			Math.log((totalDryMass + fuelCapacity.value) / totalDryMass);
 		const tau1 = maxTotalProperAccelTime / segments;
 
 		const maxDistAccelOnly =
@@ -69,6 +72,14 @@ const calculate = () => {
 			const xRemainder = dMeters - maxDistAccelOnly;
 			const v1 = C * Math.tanh((aMs2 * tau1) / C);
 			tCoastSeconds = xRemainder / v1;
+
+			// Switch unit automatically based on magnitude
+			if (tCoastSeconds > 31557600) coastingTimeUnit.value = "Y";
+			else if (tCoastSeconds > 86400) coastingTimeUnit.value = "D";
+			else if (tCoastSeconds > 3600) coastingTimeUnit.value = "H";
+			else if (tCoastSeconds > 60) coastingTimeUnit.value = "M";
+			else coastingTimeUnit.value = "S";
+
 			coastingTime.value =
 				tCoastSeconds / UNITS.TIME[coastingTimeUnit.value].factor;
 		}
@@ -87,13 +98,18 @@ const calculate = () => {
 		results.value.massRatio = Math.exp(
 			(aMs2 * (segments * results.value.accelPhase.properTime)) / vExhaust,
 		);
-		results.value.fuelUsed = dryMass.value * (results.value.massRatio - 1);
+		results.value.fuelUsed = totalDryMass * (results.value.massRatio - 1);
 		results.value.fuelWarning =
 			results.value.fuelUsed > fuelCapacity.value + 0.01;
 
 		if (roundTrip.value) {
-			results.value.totalProperTime *= 2;
-			results.value.totalCoordTime *= 2;
+			const tWaitSeconds =
+				(waitTime.value || 0) * UNITS.TIME[waitTimeUnit.value].factor;
+			results.value.totalProperTime =
+				results.value.totalProperTime * 2 + tWaitSeconds;
+			results.value.totalCoordTime =
+				results.value.totalCoordTime * 2 + tWaitSeconds;
+			results.value.waitTimeSeconds = tWaitSeconds;
 		}
 
 		updateChart();
@@ -134,8 +150,9 @@ const updateChart = () => {
 	const startFuel = fuelCapacity.value;
 	const totalBurnTimeProper =
 		(roundTrip.value ? 4 : 2) * res.accelPhase.properTime;
+	const totalDryMassValue = dryMass.value + cargoMass.value;
 	const massAtStart =
-		dryMass.value * Math.exp((a * totalBurnTimeProper) / vExhaust);
+		totalDryMassValue * Math.exp((a * totalBurnTimeProper) / vExhaust);
 
 	let currentMass = massAtStart;
 	let currentTimeCoord = 0;
@@ -197,9 +214,17 @@ const updateChart = () => {
 	// Outbound
 	const leg1 = generateLeg(0, massAtStart);
 
+	// Wait Time
+	let currentT = leg1.endCoord;
+	let currentM = leg1.endMass;
+	if (roundTrip.value && res.waitTimeSeconds > 0) {
+		currentT += res.waitTimeSeconds;
+		addPoint(currentT, 0, currentM);
+	}
+
 	// Return
 	if (roundTrip.value) {
-		generateLeg(leg1.endCoord, leg1.endMass);
+		generateLeg(currentT, currentM);
 	}
 
 	if (chart) chart.destroy();
@@ -347,6 +372,9 @@ watch(
 		efficiency,
 		dryMass,
 		fuelCapacity,
+		cargoMass,
+		waitTime,
+		waitTimeUnit,
 		autoCoast,
 		roundTrip,
 	],
@@ -485,6 +513,40 @@ onMounted(() => {
 									type="number"
 									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-none"
 								/>
+							</div>
+						</div>
+						<div class="flex gap-2">
+							<div class="w-1/2">
+								<p class="text-[10px] text-slate-500 uppercase mb-1">
+									Cargo Mass (t)
+								</p>
+								<input
+									v-model.number="cargoMass"
+									type="number"
+									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-none"
+								/>
+							</div>
+							<div class="w-1/2">
+								<p class="text-[10px] text-slate-500 uppercase mb-1">
+									Wait Time
+								</p>
+								<div class="flex gap-1">
+									<input
+										v-model.number="waitTime"
+										type="number"
+										:disabled="!roundTrip"
+										class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-none disabled:opacity-30"
+									/>
+									<select
+										v-model="waitTimeUnit"
+										:disabled="!roundTrip"
+										class="bg-slate-900 border border-slate-700 rounded-lg px-1 py-1 text-[10px] outline-none disabled:opacity-30"
+									>
+										<option v-for="(u, k) in UNITS.TIME" :key="k" :value="k">
+											{{ u.label[0].toUpperCase() }}
+										</option>
+									</select>
+								</div>
 							</div>
 						</div>
 						<div class="flex flex-col gap-2">

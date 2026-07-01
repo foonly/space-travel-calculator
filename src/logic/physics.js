@@ -21,63 +21,6 @@ export const UNITS = {
 	},
 };
 
-export const PRESETS = [
-	{ name: "Moon", distance: 384400, unit: "KM" },
-	{ name: "Mars (Closest)", distance: 54.6e6, unit: "KM" },
-	{ name: "Mars (Avg)", distance: 225e6, unit: "KM" },
-	{ name: "Ceres", distance: 414e6, unit: "KM" },
-	{ name: "Jupiter (Avg)", distance: 778e6, unit: "KM" },
-	{ name: "Saturn (Avg)", distance: 1.43e9, unit: "KM" },
-	{ name: "Neptune (Avg)", distance: 4.5e9, unit: "KM" },
-	{ name: "Pluto (Avg)", distance: 5.9e9, unit: "KM" },
-	{ name: "Voyager 1 (Current)", distance: 163, unit: "AU" },
-	{ name: "Alpha Centauri", distance: 4.37, unit: "LY" },
-	{ name: "Galactic Center", distance: 26000, unit: "LY" },
-	{ name: "Andromeda Galaxy", distance: 2.537e6, unit: "LY" },
-];
-
-export const SHIP_PRESETS = [
-	{
-		name: "Interceptor",
-		efficiency: 5,
-		dryMass: 150,
-		fuelCapacity: 300,
-		accel: 5,
-		flip: 10,
-	},
-	{
-		name: "Freighter",
-		efficiency: 12,
-		dryMass: 5000,
-		fuelCapacity: 2000,
-		accel: 0.3,
-		flip: 600,
-	},
-	{
-		name: "Torchship",
-		efficiency: 25,
-		dryMass: 800,
-		fuelCapacity: 4000,
-		accel: 1.5,
-		flip: 120,
-	},
-	{
-		name: "Relativistic Probe",
-		efficiency: 95,
-		dryMass: 10,
-		fuelCapacity: 100,
-		accel: 10,
-		flip: 120,
-	},
-];
-
-/**
- * Calculates travel details.
- * @param {number} D - Total distance (meters)
- * @param {number} a - Proper acceleration (m/s^2)
- * @param {number} tCoastCoord - Coasting time in coordinate frame (seconds)
- * @param {number} tFlip - Flip time (seconds)
- */
 export function calculateTravel(D, a, tCoastCoord = 0, tFlip = 120) {
 	// We need to find tau1 (proper time of acceleration) such that
 	// 2 * x1(tau1) + v1(tau1) * (tCoastCoord + tFlip) = D
