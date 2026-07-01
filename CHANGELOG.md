@@ -1,6 +1,15 @@
 # Changelog
 
-### 1.1.1 (2026-07-01)
+## 1.2.0 (2026-07-01)
+
+#### Features
+
+- ship: add new ship presets and fix coasting calculation bug (2f2a7b9)
+- calculator: add fuel mass exclusion option and update UI/presets (b985ce9)
+- app: add cargo mass and wait time parameters (a531f07)
+- app: add round-trip support and fuel consumption chart (2511c92)
+
+### v1.1.1 (2026-07-01)
 
 #### Continuous Integration
 
