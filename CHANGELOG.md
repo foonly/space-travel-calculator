@@ -1,6 +1,12 @@
 # Changelog
 
-## 1.1.0
+### 1.1.1 (2026-07-01)
+
+#### Continuous Integration
+
+- github: add build step and update deployment path (1ceea0c)
+
+## v1.1.0 (2026-07-01)
 
 #### Features
 
