@@ -36,6 +36,7 @@ const waitTime = ref(0);
 const waitTimeUnit = ref("D");
 const autoCoast = ref(false);
 const roundTrip = ref(false);
+const ignoreFuelMass = ref(false);
 
 const results = ref(null);
 const chartCanvas = ref(null);
@@ -43,11 +44,34 @@ const fuelChartCanvas = ref(null);
 let chart = null;
 let fuelChart = null;
 
+const isValid = (val) =>
+	val !== null && val !== undefined && !isNaN(val) && val !== "";
+
 const calculate = () => {
-	const dValue = distance.value || 0;
+	const dValue = distance.value;
+	const aValue = acceleration.value;
+	const effValue = efficiency.value;
+	const mDry = dryMass.value;
+
+	if (
+		!isValid(dValue) ||
+		!isValid(aValue) ||
+		aValue <= 0 ||
+		!isValid(effValue) ||
+		effValue <= 0 ||
+		!isValid(mDry) ||
+		mDry <= 0
+	) {
+		results.value = null;
+		if (chart) chart.destroy();
+		if (fuelChart) fuelChart.destroy();
+		chart = null;
+		fuelChart = null;
+		return;
+	}
+
 	const dMeters = dValue * UNITS.DISTANCE[distanceUnit.value].factor;
-	const aMs2 =
-		acceleration.value * UNITS.ACCELERATION[accelerationUnit.value].factor;
+	const aMs2 = aValue * UNITS.ACCELERATION[accelerationUnit.value].factor;
 	const effFraction = efficiency.value / 100;
 	const vExhaust = effFraction * C;
 	const totalDryMass = dryMass.value + cargoMass.value;
@@ -57,9 +81,20 @@ const calculate = () => {
 
 	if (autoCoast.value) {
 		const segments = roundTrip.value ? 4 : 2;
-		const maxTotalProperAccelTime =
-			(vExhaust / aMs2) *
-			Math.log((totalDryMass + fuelCapacity.value) / totalDryMass);
+		let maxTotalProperAccelTime;
+
+		if (ignoreFuelMass.value) {
+			// Linear fuel consumption: m_fuel = (m_dry * a * tau) / v_e
+			// tau = (m_fuel * v_e) / (m_dry * a)
+			maxTotalProperAccelTime =
+				(fuelCapacity.value * vExhaust) / (totalDryMass * aMs2);
+		} else {
+			// Relativistic rocket equation: tau = (v_e / a) * ln(m0 / m1)
+			maxTotalProperAccelTime =
+				(vExhaust / aMs2) *
+				Math.log((totalDryMass + fuelCapacity.value) / totalDryMass);
+		}
+
 		const tau1 = maxTotalProperAccelTime / segments;
 
 		const maxDistAccelOnly =
@@ -95,10 +130,29 @@ const calculate = () => {
 
 		// Override mass ratio with user efficiency and segments
 		const segments = roundTrip.value ? 4 : 2;
-		results.value.massRatio = Math.exp(
-			(aMs2 * (segments * results.value.accelPhase.properTime)) / vExhaust,
+		const totalProperAccelTime = segments * results.value.accelPhase.properTime;
+
+		if (ignoreFuelMass.value) {
+			// Linear consumption: mass is constant, so fuel is proportional to work/impulse
+			results.value.fuelUsed =
+				(totalDryMass * aMs2 * totalProperAccelTime) / vExhaust;
+			results.value.massRatio = 1 + results.value.fuelUsed / totalDryMass;
+		} else {
+			// Exponential consumption (Rocket Equation)
+			results.value.massRatio = Math.exp(
+				(aMs2 * totalProperAccelTime) / vExhaust,
+			);
+			results.value.fuelUsed = totalDryMass * (results.value.massRatio - 1);
+		}
+
+		results.value.fuelRemaining = Math.max(
+			0,
+			fuelCapacity.value - results.value.fuelUsed,
 		);
-		results.value.fuelUsed = totalDryMass * (results.value.massRatio - 1);
+		results.value.fuelRemaining = Math.max(
+			0,
+			fuelCapacity.value - results.value.fuelUsed,
+		);
 		results.value.fuelWarning =
 			results.value.fuelUsed > fuelCapacity.value + 0.01;
 
@@ -148,25 +202,27 @@ const updateChart = () => {
 	const vExhaust = effFraction * C;
 
 	const startFuel = fuelCapacity.value;
-	const totalBurnTimeProper =
-		(roundTrip.value ? 4 : 2) * res.accelPhase.properTime;
+	const segments = roundTrip.value ? 4 : 2;
+	const totalProperAccelTime = segments * res.accelPhase.properTime;
 	const totalDryMassValue = dryMass.value + cargoMass.value;
-	const massAtStart =
-		totalDryMassValue * Math.exp((a * totalBurnTimeProper) / vExhaust);
 
-	let currentMass = massAtStart;
-	let currentTimeCoord = 0;
+	let massAtStart;
+	if (ignoreFuelMass.value) {
+		massAtStart = totalDryMassValue; // Ship mass is constant
+	} else {
+		massAtStart =
+			totalDryMassValue * Math.exp((a * totalProperAccelTime) / vExhaust);
+	}
 
-	const addPoint = (tCoord, v, m) => {
+	const addPoint = (tCoord, v, m, fuelUsed) => {
 		labels.push(tCoord);
 		vData.push(v / 1000);
-		// Fuel remaining in tank (accounting for initial fuel used)
-		const fuelUsedSoFar = massAtStart - m;
-		fData.push(startFuel - fuelUsedSoFar);
+		fData.push(startFuel - fuelUsed);
 	};
 
-	const generateLeg = (startTimeCoord, startMass) => {
+	const generateLeg = (startTimeCoord, startMass, startFuelUsed) => {
 		let m = startMass;
+		let fUsed = startFuelUsed;
 		let tBase = startTimeCoord;
 
 		// Accel
@@ -176,55 +232,84 @@ const updateChart = () => {
 			const tCoord = stepFraction * res.accelPhase.coordTime;
 			const tProper = stepFraction * res.accelPhase.properTime;
 			const v = (a * tCoord) / Math.sqrt(1 + ((a * tCoord) / C) ** 2);
-			const mNow = startMass * Math.exp((-a * tProper) / vExhaust);
-			addPoint(tBase + tCoord, v, mNow);
+
+			let mNow, fuelDelta;
+			if (ignoreFuelMass.value) {
+				mNow = totalDryMassValue;
+				fuelDelta = (totalDryMassValue * a * tProper) / vExhaust;
+			} else {
+				mNow = startMass * Math.exp((-a * tProper) / vExhaust);
+				fuelDelta = startMass - mNow;
+			}
+
+			addPoint(tBase + tCoord, v, mNow, startFuelUsed + fuelDelta);
 			m = mNow;
+			fUsed = startFuelUsed + fuelDelta;
 		}
 
 		tBase += res.accelPhase.coordTime;
 		const massAfterAccel = m;
+		const fuelAfterAccel = fUsed;
 
 		// Flip
 		if (res.flipPhase.coordTime > 0) {
 			tBase += res.flipPhase.coordTime;
-			addPoint(tBase, res.maxSpeed, massAfterAccel);
+			addPoint(tBase, res.maxSpeed, massAfterAccel, fuelAfterAccel);
 		}
 
 		// Coast
 		if (res.coastPhase.coordTime > 0) {
 			tBase += res.coastPhase.coordTime;
-			addPoint(tBase, res.maxSpeed, massAfterAccel);
+			addPoint(tBase, res.maxSpeed, massAfterAccel, fuelAfterAccel);
 		}
 
 		// Decel
+		const fuelAtDecelStart = fuelAfterAccel;
+		const massAtDecelStart = massAfterAccel;
+
 		for (let i = 1; i <= steps; i++) {
 			const stepFraction = i / steps;
 			const tCoord = stepFraction * res.decelPhase.coordTime;
 			const tProper = stepFraction * res.decelPhase.properTime;
 			const tReverse = res.decelPhase.coordTime - tCoord;
 			const v = (a * tReverse) / Math.sqrt(1 + ((a * tReverse) / C) ** 2);
-			const mNow = massAfterAccel * Math.exp((-a * tProper) / vExhaust);
-			addPoint(tBase + tCoord, v, mNow);
+
+			let mNow, fuelDelta;
+			if (ignoreFuelMass.value) {
+				mNow = totalDryMassValue;
+				fuelDelta = (totalDryMassValue * a * tProper) / vExhaust;
+			} else {
+				mNow = massAtDecelStart * Math.exp((-a * tProper) / vExhaust);
+				fuelDelta = massAtDecelStart - mNow;
+			}
+
+			addPoint(tBase + tCoord, v, mNow, fuelAtDecelStart + fuelDelta);
 			m = mNow;
+			fUsed = fuelAtDecelStart + fuelDelta;
 		}
 
-		return { endCoord: tBase + res.decelPhase.coordTime, endMass: m };
+		return {
+			endCoord: tBase + res.decelPhase.coordTime,
+			endMass: m,
+			endFuelUsed: fUsed,
+		};
 	};
 
 	// Outbound
-	const leg1 = generateLeg(0, massAtStart);
+	const leg1 = generateLeg(0, massAtStart, 0);
 
 	// Wait Time
 	let currentT = leg1.endCoord;
 	let currentM = leg1.endMass;
+	let currentF = leg1.endFuelUsed;
 	if (roundTrip.value && res.waitTimeSeconds > 0) {
 		currentT += res.waitTimeSeconds;
-		addPoint(currentT, 0, currentM);
+		addPoint(currentT, 0, currentM, currentF);
 	}
 
 	// Return
 	if (roundTrip.value) {
-		generateLeg(currentT, currentM);
+		generateLeg(currentT, currentM, currentF);
 	}
 
 	if (chart) chart.destroy();
@@ -377,6 +462,7 @@ watch(
 		waitTimeUnit,
 		autoCoast,
 		roundTrip,
+		ignoreFuelMass,
 	],
 	calculate,
 );
@@ -576,6 +662,19 @@ onMounted(() => {
 									>Round-trip (no refueling)</label
 								>
 							</div>
+							<div class="flex items-center gap-2">
+								<input
+									type="checkbox"
+									v-model="ignoreFuelMass"
+									id="ignoreFuelMass"
+									class="rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-0"
+								/>
+								<label
+									for="ignoreFuelMass"
+									class="text-xs text-slate-400 cursor-pointer"
+									>Exclude fuel mass from inertia</label
+								>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -638,7 +737,10 @@ onMounted(() => {
 
 			<!-- Results -->
 			<div class="lg:col-span-2 space-y-8">
-				<div v-if="results" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+				<div
+					v-if="results"
+					class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
+				>
 					<div
 						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 flex flex-col justify-between"
 					>
@@ -648,7 +750,11 @@ onMounted(() => {
 								{{ roundTrip ? "Total Round-Trip" : "Outside Time" }}
 							</p>
 							<h2 class="text-3xl font-bold text-white">
-								{{ formatDuration(results.totalCoordTime) }}
+								{{
+									isValid(results.totalCoordTime)
+										? formatDuration(results.totalCoordTime)
+										: "-"
+								}}
 							</h2>
 						</div>
 						<p class="text-xs text-slate-500 mt-4">
@@ -665,7 +771,11 @@ onMounted(() => {
 								{{ roundTrip ? "Total Ship Time" : "Ship Time" }}
 							</p>
 							<h2 class="text-3xl font-bold text-blue-100">
-								{{ formatDuration(results.totalProperTime) }}
+								{{
+									isValid(results.totalProperTime)
+										? formatDuration(results.totalProperTime)
+										: "-"
+								}}
 							</h2>
 						</div>
 						<p class="text-xs text-blue-400/60 mt-4">
@@ -692,11 +802,17 @@ onMounted(() => {
 								:class="results.fuelWarning ? 'text-red-400' : 'text-white'"
 							>
 								{{
-									results.fuelUsed.toLocaleString(undefined, {
-										maximumFractionDigits: 1,
-									})
+									isValid(results.fuelUsed)
+										? results.fuelUsed.toLocaleString(undefined, {
+												maximumFractionDigits: 1,
+											})
+										: "-"
 								}}
-								<span class="text-lg font-normal opacity-60">t</span>
+								<span
+									v-if="isValid(results.fuelUsed)"
+									class="text-lg font-normal opacity-60"
+									>t</span
+								>
 							</h2>
 						</div>
 						<p
@@ -708,13 +824,43 @@ onMounted(() => {
 							{{
 								results.fuelWarning
 									? "WARNING: Exceeds fuel capacity!"
-									: `Mass ratio: ${results.massRatio.toFixed(2)}:1`
+									: isValid(results.massRatio)
+										? `Mass ratio: ${results.massRatio.toFixed(2)}:1`
+										: ""
 							}}
 						</p>
 					</div>
 
 					<div
-						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 col-span-1 md:col-span-2"
+						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 flex flex-col justify-between"
+					>
+						<div>
+							<p class="text-slate-400 text-sm mb-1 flex items-center gap-2">
+								<Fuel class="w-4 h-4 text-emerald-400" />
+								Fuel Remaining
+							</p>
+							<h2 class="text-3xl font-bold text-white">
+								{{
+									isValid(results.fuelRemaining)
+										? results.fuelRemaining.toLocaleString(undefined, {
+												maximumFractionDigits: 1,
+											})
+										: "-"
+								}}
+								<span
+									v-if="isValid(results.fuelRemaining)"
+									class="text-lg font-normal opacity-60"
+									>t</span
+								>
+							</h2>
+						</div>
+						<p class="text-xs text-slate-500 mt-4">
+							Propellant remaining in the tanks after the mission.
+						</p>
+					</div>
+
+					<div
+						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 col-span-1 md:col-span-2 lg:col-span-4"
 					>
 						<div class="flex items-center justify-between mb-4">
 							<p class="text-slate-400 text-sm flex items-center gap-2">
@@ -723,15 +869,29 @@ onMounted(() => {
 							<span
 								class="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded"
 							>
-								γ = {{ results.maxGamma.toFixed(4) }}
+								γ =
+								{{
+									isValid(results.maxGamma) ? results.maxGamma.toFixed(4) : "-"
+								}}
 							</span>
 						</div>
 						<div class="flex items-baseline gap-4">
 							<h2 class="text-3xl font-bold text-white">
-								{{ (results.maxSpeed / 1000).toLocaleString() }}
-								<span class="text-lg font-normal text-slate-400">km/s</span>
+								{{
+									isValid(results.maxSpeed)
+										? (results.maxSpeed / 1000).toLocaleString()
+										: "-"
+								}}
+								<span
+									v-if="isValid(results.maxSpeed)"
+									class="text-lg font-normal text-slate-400"
+									>km/s</span
+								>
 							</h2>
-							<h3 class="text-xl text-indigo-400">
+							<h3
+								v-if="isValid(results.maxSpeedPct)"
+								class="text-xl text-indigo-400"
+							>
 								{{ results.maxSpeedPct.toFixed(2) }}%
 								<span class="text-sm font-normal text-slate-500 italic">c</span>
 							</h3>
@@ -771,16 +931,30 @@ onMounted(() => {
 						<div class="flex justify-between text-sm">
 							<span class="text-slate-500">Acceleration</span>
 							<span class="text-slate-300"
-								>{{ formatDistance(results.accelPhase.distance) }} ({{
-									formatDuration(results.accelPhase.coordTime)
+								>{{
+									isValid(results.accelPhase.distance)
+										? formatDistance(results.accelPhase.distance)
+										: "-"
+								}}
+								({{
+									isValid(results.accelPhase.coordTime)
+										? formatDuration(results.accelPhase.coordTime)
+										: "-"
 								}})</span
 							>
 						</div>
 						<div class="flex justify-between text-sm">
 							<span class="text-slate-500">Flip Maneuver</span>
 							<span class="text-slate-300"
-								>{{ formatDistance(results.flipPhase.distance) }} ({{
-									formatDuration(results.flipPhase.coordTime)
+								>{{
+									isValid(results.flipPhase.distance)
+										? formatDistance(results.flipPhase.distance)
+										: "-"
+								}}
+								({{
+									isValid(results.flipPhase.coordTime)
+										? formatDuration(results.flipPhase.coordTime)
+										: "-"
 								}})</span
 							>
 						</div>
@@ -790,8 +964,15 @@ onMounted(() => {
 						>
 							<span class="text-slate-500">Coasting</span>
 							<span class="text-slate-300"
-								>{{ formatDistance(results.coastPhase.distance) }} ({{
-									formatDuration(results.coastPhase.coordTime)
+								>{{
+									isValid(results.coastPhase.distance)
+										? formatDistance(results.coastPhase.distance)
+										: "-"
+								}}
+								({{
+									isValid(results.coastPhase.coordTime)
+										? formatDuration(results.coastPhase.coordTime)
+										: "-"
 								}})</span
 							>
 						</div>
@@ -800,7 +981,9 @@ onMounted(() => {
 						>
 							<span class="text-slate-400 font-medium">Total Distance</span>
 							<span class="text-slate-200">{{
-								formatDistance(results.totalDistance)
+								isValid(results.totalDistance)
+									? formatDistance(results.totalDistance)
+									: "-"
 							}}</span>
 						</div>
 					</div>
