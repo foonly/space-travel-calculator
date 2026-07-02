@@ -1,6 +1,12 @@
 # Changelog
 
-### 1.2.1 (2026-07-01)
+## 1.3.0 (2026-07-02)
+
+#### Features
+
+- app: add engine thrust chart and improve number formatting (2bbb46d)
+
+### v1.2.1 (2026-07-01)
 
 #### Styles
 
