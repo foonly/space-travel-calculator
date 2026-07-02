@@ -109,16 +109,39 @@ export function calculateTravel(D, a, tCoastCoord = 0, tFlip = 120) {
 }
 
 export function formatDuration(seconds) {
-	if (seconds < 60) return `${seconds.toFixed(1)}s`;
-	if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;
-	if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`;
-	if (seconds < 31557600) return `${(seconds / 86400).toFixed(1)}d`;
-	return `${(seconds / 31557600).toFixed(2)}y`;
+	if (seconds < 60)
+		return `${seconds.toLocaleString(undefined, {
+			maximumSignificantDigits: 3,
+		})}s`;
+	if (seconds < 3600)
+		return `${(seconds / 60).toLocaleString(undefined, {
+			maximumSignificantDigits: 3,
+		})}m`;
+	if (seconds < 86400)
+		return `${(seconds / 3600).toLocaleString(undefined, {
+			maximumSignificantDigits: 3,
+		})}h`;
+	if (seconds < 31557600)
+		return `${(seconds / 86400).toLocaleString(undefined, {
+			maximumSignificantDigits: 3,
+		})}d`;
+	return `${(seconds / 31557600).toLocaleString(undefined, {
+		maximumSignificantDigits: 3,
+	})}y`;
 }
 
 export function formatDistance(meters) {
-	if (meters < 1000) return `${meters.toFixed(1)}m`;
-	if (meters < 1.5e11) return `${(meters / 1000).toLocaleString()}km`;
-	if (meters < 9.46e15) return `${(meters / 1.496e11).toFixed(3)} AU`;
-	return `${(meters / 9.461e15).toFixed(3)} ly`;
+	if (meters < 1000)
+		return `${meters.toLocaleString(undefined, { maximumSignificantDigits: 3 })}m`;
+	if (meters < 1.5e11)
+		return `${(meters / 1000).toLocaleString(undefined, {
+			maximumSignificantDigits: 3,
+		})}km`;
+	if (meters < 9.46e15)
+		return `${(meters / 1.496e11).toLocaleString(undefined, {
+			maximumSignificantDigits: 3,
+		})} AU`;
+	return `${(meters / 9.461e15).toLocaleString(undefined, {
+		maximumSignificantDigits: 3,
+	})} ly`;
 }

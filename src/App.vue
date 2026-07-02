@@ -41,8 +41,10 @@ const ignoreFuelMass = ref(false);
 const results = ref(null);
 const chartCanvas = ref(null);
 const fuelChartCanvas = ref(null);
+const thrustChartCanvas = ref(null);
 let chart = null;
 let fuelChart = null;
+let thrustChart = null;
 
 const isValid = (val) =>
 	val !== null && val !== undefined && !isNaN(val) && val !== "";
@@ -191,11 +193,18 @@ const setShipPreset = (ship) => {
 };
 
 const updateChart = () => {
-	if (!chartCanvas.value || !fuelChartCanvas.value || !results.value) return;
+	if (
+		!chartCanvas.value ||
+		!fuelChartCanvas.value ||
+		!thrustChartCanvas.value ||
+		!results.value
+	)
+		return;
 
 	const res = results.value;
 	const vData = [];
 	const fData = [];
+	const tData = [];
 	const labels = [];
 	const a =
 		acceleration.value * UNITS.ACCELERATION[accelerationUnit.value].factor;
@@ -215,10 +224,11 @@ const updateChart = () => {
 			totalDryMassValue * Math.exp((a * totalProperAccelTime) / vExhaust);
 	}
 
-	const addPoint = (tCoord, v, m, fuelUsed) => {
+	const addPoint = (tCoord, v, m, fuelUsed, thrust = 0) => {
 		labels.push(tCoord);
 		vData.push(v / 1000);
 		fData.push(startFuel - fuelUsed);
+		tData.push(thrust);
 	};
 
 	const generateLeg = (startTimeCoord, startMass, startFuelUsed) => {
@@ -243,7 +253,13 @@ const updateChart = () => {
 				fuelDelta = startMass - mNow;
 			}
 
-			addPoint(tBase + tCoord, v, mNow, startFuelUsed + fuelDelta);
+			addPoint(
+				tBase + tCoord,
+				v,
+				mNow,
+				startFuelUsed + fuelDelta,
+				(mNow * a) / 1000,
+			);
 			m = mNow;
 			fUsed = startFuelUsed + fuelDelta;
 		}
@@ -255,13 +271,13 @@ const updateChart = () => {
 		// Flip
 		if (res.flipPhase.coordTime > 0) {
 			tBase += res.flipPhase.coordTime;
-			addPoint(tBase, res.maxSpeed, massAfterAccel, fuelAfterAccel);
+			addPoint(tBase, res.maxSpeed, massAfterAccel, fuelAfterAccel, 0);
 		}
 
 		// Coast
 		if (res.coastPhase.coordTime > 0) {
 			tBase += res.coastPhase.coordTime;
-			addPoint(tBase, res.maxSpeed, massAfterAccel, fuelAfterAccel);
+			addPoint(tBase, res.maxSpeed, massAfterAccel, fuelAfterAccel, 0);
 		}
 
 		// Decel
@@ -284,7 +300,13 @@ const updateChart = () => {
 				fuelDelta = massAtDecelStart - mNow;
 			}
 
-			addPoint(tBase + tCoord, v, mNow, fuelAtDecelStart + fuelDelta);
+			addPoint(
+				tBase + tCoord,
+				v,
+				mNow,
+				fuelAtDecelStart + fuelDelta,
+				(mNow * a) / 1000,
+			);
 			m = mNow;
 			fUsed = fuelAtDecelStart + fuelDelta;
 		}
@@ -305,7 +327,7 @@ const updateChart = () => {
 	let currentF = leg1.endFuelUsed;
 	if (roundTrip.value && res.waitTimeSeconds > 0) {
 		currentT += res.waitTimeSeconds;
-		addPoint(currentT, 0, currentM, currentF);
+		addPoint(currentT, 0, currentM, currentF, 0);
 	}
 
 	// Return
@@ -315,6 +337,7 @@ const updateChart = () => {
 
 	if (chart) chart.destroy();
 	if (fuelChart) fuelChart.destroy();
+	if (thrustChart) thrustChart.destroy();
 
 	const maxT = labels[labels.length - 1];
 	let timeUnit = "s";
@@ -378,7 +401,9 @@ const updateChart = () => {
 				tooltip: {
 					callbacks: {
 						label: (context) =>
-							`Velocity: ${context.parsed.y.toLocaleString()} km/s`,
+							`Velocity: ${context.parsed.y.toLocaleString(undefined, {
+								maximumSignificantDigits: 3,
+							})} km/s`,
 						title: (items) =>
 							`Time: ${(items[0].parsed.x / divisor).toFixed(2)} ${timeUnit}`,
 					},
@@ -436,7 +461,70 @@ const updateChart = () => {
 				legend: { display: false },
 				tooltip: {
 					callbacks: {
-						label: (context) => `Fuel: ${context.parsed.y.toLocaleString()} t`,
+						label: (context) =>
+							`Fuel: ${context.parsed.y.toLocaleString(undefined, {
+								maximumSignificantDigits: 3,
+							})} t`,
+						title: (items) =>
+							`Time: ${(items[0].parsed.x / divisor).toFixed(2)} ${timeUnit}`,
+					},
+				},
+			},
+		},
+	});
+
+	// Thrust Chart
+	thrustChart = new Chart(thrustChartCanvas.value, {
+		type: "line",
+		data: {
+			labels: labels,
+			datasets: [
+				{
+					label: "Thrust (MN)",
+					data: tData,
+					borderColor: "#fbbf24",
+					backgroundColor: "rgba(251, 191, 36, 0.1)",
+					fill: true,
+					pointRadius: 0,
+					borderWidth: 2,
+					tension: 0.1,
+				},
+			],
+		},
+		options: {
+			responsive: true,
+			maintainAspectRatio: false,
+			scales: {
+				x: {
+					type: "linear",
+					display: true,
+					title: {
+						display: true,
+						text: `Time (${timeUnit})`,
+						color: "#94a3b8",
+					},
+					ticks: {
+						color: "#64748b",
+						callback: (val) => (val / divisor).toFixed(1),
+					},
+					grid: { color: "rgba(255,255,255,0.05)" },
+				},
+				y: {
+					display: true,
+					title: { display: true, text: "Thrust (MN)", color: "#94a3b8" },
+					ticks: { color: "#64748b" },
+					grid: { color: "rgba(255,255,255,0.05)" },
+					beginAtZero: true,
+				},
+			},
+			plugins: {
+				legend: { display: false },
+				tooltip: {
+					callbacks: {
+						label: (context) =>
+							`Thrust: ${context.parsed.y.toLocaleString(undefined, {
+								maximumSignificantDigits: 3,
+							})} MN`,
 						title: (items) =>
 							`Time: ${(items[0].parsed.x / divisor).toFixed(2)} ${timeUnit}`,
 					},
@@ -802,7 +890,7 @@ onMounted(() => {
 								{{
 									isValid(results.fuelUsed)
 										? results.fuelUsed.toLocaleString(undefined, {
-												maximumFractionDigits: 1,
+												maximumSignificantDigits: 3,
 											})
 										: "-"
 								}}
@@ -841,7 +929,7 @@ onMounted(() => {
 								{{
 									isValid(results.fuelRemaining)
 										? results.fuelRemaining.toLocaleString(undefined, {
-												maximumFractionDigits: 1,
+												maximumSignificantDigits: 3,
 											})
 										: "-"
 								}}
@@ -877,7 +965,9 @@ onMounted(() => {
 							<h2 class="text-3xl font-bold text-white">
 								{{
 									isValid(results.maxSpeed)
-										? (results.maxSpeed / 1000).toLocaleString()
+										? (results.maxSpeed / 1000).toLocaleString(undefined, {
+												maximumSignificantDigits: 3,
+											})
 										: "-"
 								}}
 								<span
@@ -897,7 +987,7 @@ onMounted(() => {
 					</div>
 				</div>
 
-				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					<div
 						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64"
 					>
@@ -913,6 +1003,14 @@ onMounted(() => {
 							Fuel Consumption
 						</div>
 						<canvas ref="fuelChartCanvas"></canvas>
+					</div>
+					<div
+						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64"
+					>
+						<div class="text-xs text-slate-500 mb-2 uppercase tracking-tighter">
+							Engine Thrust
+						</div>
+						<canvas ref="thrustChartCanvas"></canvas>
 					</div>
 				</div>
 
