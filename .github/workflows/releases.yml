@@ -16,15 +16,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run foonver
-        id: foonver
-        uses: foonly/foonver@v0.14.0
-        with:
-          command: "auto"
-          changelog: "true"
-          push: "true"
-          commit_suffix: "[skip ci]"
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -33,6 +24,19 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Before foonver so a failing test doesn't tag a release
+      - name: Test
+        run: npm test
+
+      - name: Run foonver
+        id: foonver
+        uses: foonly/foonver@v0.14.0
+        with:
+          command: "auto"
+          changelog: "true"
+          push: "true"
+          commit_suffix: "[skip ci]"
 
       - name: Build
         run: npm run build
