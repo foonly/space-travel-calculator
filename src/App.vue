@@ -46,40 +46,65 @@ let chart = null;
 let fuelChart = null;
 let thrustChart = null;
 
+const errorMessage = ref("");
+
 const isValid = (val) =>
 	val !== null && val !== undefined && !isNaN(val) && val !== "";
 
-const calculate = () => {
-	const dValue = distance.value;
-	const aValue = acceleration.value;
-	const effValue = efficiency.value;
-	const mDry = dryMass.value;
+// v-model.number yields "" for an empty field, which would turn `+` into string concatenation
+const requiredNumber = (val) => (isValid(val) ? Number(val) : NaN);
+const optionalNumber = (val) => (isValid(val) ? Number(val) : 0);
 
+const destroyCharts = () => {
+	chart?.destroy();
+	fuelChart?.destroy();
+	thrustChart?.destroy();
+	chart = null;
+	fuelChart = null;
+	thrustChart = null;
+};
+
+const clearResults = (message) => {
+	results.value = null;
+	errorMessage.value = message;
+	destroyCharts();
+};
+
+const calculate = () => {
+	const d = requiredNumber(distance.value);
+	const a = requiredNumber(acceleration.value);
+	const eff = requiredNumber(efficiency.value);
+	const mDry = requiredNumber(dryMass.value);
+	const mCargo = optionalNumber(cargoMass.value);
+	const fuel = optionalNumber(fuelCapacity.value);
+	const tCoast = optionalNumber(coastingTime.value);
+	const tWait = optionalNumber(waitTime.value);
+	const tFlip = optionalNumber(flipTime.value);
+
+	// Written as positive checks so NaN fails them
 	if (
-		!isValid(dValue) ||
-		!isValid(aValue) ||
-		aValue <= 0 ||
-		!isValid(effValue) ||
-		effValue <= 0 ||
-		!isValid(mDry) ||
-		mDry <= 0
+		!(d >= 0) ||
+		!(a > 0) ||
+		!(eff > 0) ||
+		!(mDry > 0) ||
+		!(mCargo >= 0) ||
+		!(fuel >= 0) ||
+		!(tCoast >= 0) ||
+		!(tWait >= 0) ||
+		!(tFlip >= 0)
 	) {
-		results.value = null;
-		if (chart) chart.destroy();
-		if (fuelChart) fuelChart.destroy();
-		chart = null;
-		fuelChart = null;
+		clearResults(
+			"Enter valid values: acceleration, efficiency and dry mass must be greater than zero, and nothing can be negative.",
+		);
 		return;
 	}
 
-	const dMeters = dValue * UNITS.DISTANCE[distanceUnit.value].factor;
-	const aMs2 = aValue * UNITS.ACCELERATION[accelerationUnit.value].factor;
-	const effFraction = efficiency.value / 100;
-	const vExhaust = effFraction * C;
-	const totalDryMass = dryMass.value + cargoMass.value;
+	const dMeters = d * UNITS.DISTANCE[distanceUnit.value].factor;
+	const aMs2 = a * UNITS.ACCELERATION[accelerationUnit.value].factor;
+	const vExhaust = (eff / 100) * C;
+	const totalDryMass = mDry + mCargo;
 
-	let tCoastSeconds =
-		(coastingTime.value || 0) * UNITS.TIME[coastingTimeUnit.value].factor;
+	let tCoastSeconds = tCoast * UNITS.TIME[coastingTimeUnit.value].factor;
 
 	if (autoCoast.value) {
 		const segments = roundTrip.value ? 4 : 2;
@@ -88,27 +113,29 @@ const calculate = () => {
 		if (ignoreFuelMass.value) {
 			// Linear fuel consumption: m_fuel = (m_dry * a * tau) / v_e
 			// tau = (m_fuel * v_e) / (m_dry * a)
-			maxTotalProperAccelTime =
-				(fuelCapacity.value * vExhaust) / (totalDryMass * aMs2);
+			maxTotalProperAccelTime = (fuel * vExhaust) / (totalDryMass * aMs2);
 		} else {
 			// Relativistic rocket equation: tau = (v_e / a) * ln(m0 / m1)
 			maxTotalProperAccelTime =
-				(vExhaust / aMs2) *
-				Math.log((totalDryMass + fuelCapacity.value) / totalDryMass);
+				(vExhaust / aMs2) * Math.log((totalDryMass + fuel) / totalDryMass);
 		}
 
 		const tau1 = maxTotalProperAccelTime / segments;
+		const v1 = C * Math.tanh((aMs2 * tau1) / C);
 
 		const maxDistAccelOnly =
-			2 * (C ** 2 / aMs2) * (Math.cosh((aMs2 * tau1) / C) - 1) +
-			C * Math.tanh((aMs2 * tau1) / C) * flipTime.value;
+			2 * (C ** 2 / aMs2) * (Math.cosh((aMs2 * tau1) / C) - 1) + v1 * tFlip;
 
-		if (maxDistAccelOnly > dMeters) {
+		if (maxDistAccelOnly >= dMeters) {
 			tCoastSeconds = 0;
 			coastingTime.value = 0;
+		} else if (v1 <= 0) {
+			clearResults(
+				"Not enough fuel to accelerate. Add fuel or turn off auto-coasting.",
+			);
+			return;
 		} else {
 			const xRemainder = dMeters - maxDistAccelOnly;
-			const v1 = C * Math.tanh((aMs2 * tau1) / C);
 			tCoastSeconds = xRemainder / v1;
 
 			// Switch unit automatically based on magnitude
@@ -124,52 +151,42 @@ const calculate = () => {
 	}
 
 	try {
-		results.value = calculateTravel(
-			dMeters,
-			aMs2,
-			tCoastSeconds,
-			flipTime.value,
-		);
+		const res = calculateTravel(dMeters, aMs2, tCoastSeconds, tFlip);
 
 		// Override mass ratio with user efficiency and segments
 		const segments = roundTrip.value ? 4 : 2;
-		const totalProperAccelTime = segments * results.value.accelPhase.properTime;
+		const totalProperAccelTime = segments * res.accelPhase.properTime;
 
 		if (ignoreFuelMass.value) {
 			// Linear consumption: mass is constant, so fuel is proportional to work/impulse
-			results.value.fuelUsed =
-				(totalDryMass * aMs2 * totalProperAccelTime) / vExhaust;
-			results.value.massRatio = 1 + results.value.fuelUsed / totalDryMass;
+			res.fuelUsed = (totalDryMass * aMs2 * totalProperAccelTime) / vExhaust;
+			res.massRatio = 1 + res.fuelUsed / totalDryMass;
+			res.fuelRemaining = Math.max(0, fuel - res.fuelUsed);
 		} else {
 			// Exponential consumption (Rocket Equation)
-			results.value.massRatio = Math.exp(
-				(aMs2 * totalProperAccelTime) / vExhaust,
+			res.massRatio = Math.exp((aMs2 * totalProperAccelTime) / vExhaust);
+			// Minimum fuel needed if only that much were loaded
+			res.fuelUsed = totalDryMass * (res.massRatio - 1);
+			// What is left when flying with full tanks, whose extra mass costs fuel too
+			res.fuelRemaining = Math.max(
+				0,
+				(totalDryMass + fuel) / res.massRatio - totalDryMass,
 			);
-			results.value.fuelUsed = totalDryMass * (results.value.massRatio - 1);
 		}
 
-		results.value.fuelRemaining = Math.max(
-			0,
-			fuelCapacity.value - results.value.fuelUsed,
-		);
-		results.value.fuelRemaining = Math.max(
-			0,
-			fuelCapacity.value - results.value.fuelUsed,
-		);
-		results.value.fuelWarning =
-			results.value.fuelUsed > fuelCapacity.value + 0.01;
+		res.fuelWarning = res.fuelUsed > fuel + 0.01;
 
 		if (roundTrip.value) {
-			const tWaitSeconds =
-				(waitTime.value || 0) * UNITS.TIME[waitTimeUnit.value].factor;
-			results.value.totalProperTime =
-				results.value.totalProperTime * 2 + tWaitSeconds;
-			results.value.totalCoordTime =
-				results.value.totalCoordTime * 2 + tWaitSeconds;
-			results.value.waitTimeSeconds = tWaitSeconds;
+			const tWaitSeconds = tWait * UNITS.TIME[waitTimeUnit.value].factor;
+			res.totalProperTime = res.totalProperTime * 2 + tWaitSeconds;
+			res.totalCoordTime = res.totalCoordTime * 2 + tWaitSeconds;
+			res.totalDistance = dMeters * 2;
+			res.waitTimeSeconds = tWaitSeconds;
 		}
 
-		updateChart();
+		errorMessage.value = "";
+		results.value = res;
+		updateChart({ aMs2, vExhaust, totalDryMass, fuel });
 	} catch (e) {
 		console.error(e);
 	}
@@ -192,7 +209,12 @@ const setShipPreset = (ship) => {
 	calculate();
 };
 
-const updateChart = () => {
+const updateChart = ({
+	aMs2: a,
+	vExhaust,
+	totalDryMass: totalDryMassValue,
+	fuel: startFuel,
+}) => {
 	if (
 		!chartCanvas.value ||
 		!fuelChartCanvas.value ||
@@ -206,23 +228,11 @@ const updateChart = () => {
 	const fData = [];
 	const tData = [];
 	const labels = [];
-	const a =
-		acceleration.value * UNITS.ACCELERATION[accelerationUnit.value].factor;
-	const effFraction = efficiency.value / 100;
-	const vExhaust = effFraction * C;
 
-	const startFuel = fuelCapacity.value;
-	const segments = roundTrip.value ? 4 : 2;
-	const totalProperAccelTime = segments * res.accelPhase.properTime;
-	const totalDryMassValue = dryMass.value + cargoMass.value;
-
-	let massAtStart;
-	if (ignoreFuelMass.value) {
-		massAtStart = totalDryMassValue; // Ship mass is constant
-	} else {
-		massAtStart =
-			totalDryMassValue * Math.exp((a * totalProperAccelTime) / vExhaust);
-	}
+	// Ship mass is constant when fuel mass is ignored, otherwise it starts with full tanks
+	const massAtStart = ignoreFuelMass.value
+		? totalDryMassValue
+		: totalDryMassValue + startFuel;
 
 	const addPoint = (tCoord, v, m, fuelUsed, thrust = 0) => {
 		labels.push(tCoord);
@@ -454,7 +464,7 @@ const updateChart = () => {
 					ticks: { color: "#64748b" },
 					grid: { color: "rgba(255,255,255,0.05)" },
 					beginAtZero: true,
-					max: fuelCapacity.value,
+					max: startFuel,
 				},
 			},
 			plugins: {
@@ -987,6 +997,13 @@ onMounted(() => {
 					</div>
 				</div>
 
+				<div
+					v-else-if="errorMessage"
+					class="bg-red-500/5 p-6 rounded-2xl border border-red-500/50 text-sm text-red-400"
+				>
+					{{ errorMessage }}
+				</div>
+
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					<div
 						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64"
@@ -1021,7 +1038,7 @@ onMounted(() => {
 					<h4
 						class="text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider"
 					>
-						Mission Phases
+						Mission Phases{{ roundTrip ? " (per leg)" : "" }}
 					</h4>
 					<div class="space-y-3">
 						<div class="flex justify-between text-sm">
@@ -1072,10 +1089,27 @@ onMounted(() => {
 								}})</span
 							>
 						</div>
+						<div class="flex justify-between text-sm">
+							<span class="text-slate-500">Deceleration</span>
+							<span class="text-slate-300"
+								>{{
+									isValid(results.decelPhase.distance)
+										? formatDistance(results.decelPhase.distance)
+										: "-"
+								}}
+								({{
+									isValid(results.decelPhase.coordTime)
+										? formatDuration(results.decelPhase.coordTime)
+										: "-"
+								}})</span
+							>
+						</div>
 						<div
 							class="flex justify-between text-sm border-t border-slate-800 pt-3"
 						>
-							<span class="text-slate-400 font-medium">Total Distance</span>
+							<span class="text-slate-400 font-medium">{{
+								roundTrip ? "Total Distance (round trip)" : "Total Distance"
+							}}</span>
 							<span class="text-slate-200">{{
 								isValid(results.totalDistance)
 									? formatDistance(results.totalDistance)
