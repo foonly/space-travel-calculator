@@ -18,7 +18,7 @@ import {
 	Zap,
 	Database,
 	Fuel,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import Chart from "chart.js/auto";
 
 const distance = ref(1);
