@@ -6,20 +6,25 @@ on:
       - main
       - "push-action/**"
 
+# All branches deploy to the same target, so run one at a time and never cancel a release halfway
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     permissions:
       contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: "npm"
 
       - name: Install dependencies
@@ -31,8 +36,10 @@ jobs:
 
       - name: Run foonver
         id: foonver
-        uses: foonly/foonver@v0.14.0
+        uses: foonly/foonver@v1.2.0
         with:
+          # Pin the binary too; it otherwise defaults to the latest release
+          version: "v1.2.0"
           command: "auto"
           changelog: "true"
           push: "true"
