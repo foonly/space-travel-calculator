@@ -190,10 +190,9 @@ const makeLineChart = (
 						text: `Time (${timeAxis.unit})`,
 						color: "#94a3b8",
 					},
-					ticks: {
-						color: "#64748b",
-						callback: (val) => (val / timeAxis.divisor).toFixed(1),
-					},
+					// Stop at the end of the mission instead of the next round tick
+					max: time[time.length - 1],
+					ticks: { color: "#64748b" },
 					grid: { color: "rgba(255,255,255,0.05)" },
 				},
 				y: {
@@ -215,7 +214,7 @@ const makeLineChart = (
 						label: (context) =>
 							`${label}: ${formatValue(context.parsed.y)} ${unit}`,
 						title: (items) =>
-							`Time: ${(items[0].parsed.x / timeAxis.divisor).toFixed(2)} ${timeAxis.unit}`,
+							`Time: ${formatValue(items[0].parsed.x)} ${timeAxis.unit}`,
 					},
 				},
 			},
@@ -237,6 +236,8 @@ const updateCharts = (profile, fuel) => {
 				: maxT > UNITS.TIME.H.factor
 					? { unit: "h", divisor: UNITS.TIME.H.factor }
 					: { unit: "s", divisor: 1 };
+	// Convert to the display unit so Chart.js picks round ticks in it
+	const time = profile.time.map((t) => t / timeAxis.divisor);
 
 	chart = makeLineChart(
 		chartCanvas.value,
@@ -247,7 +248,7 @@ const updateCharts = (profile, fuel) => {
 			fill: "rgba(56, 189, 248, 0.1)",
 			data: profile.velocity,
 		},
-		profile.time,
+		time,
 		timeAxis,
 	);
 	fuelChart = makeLineChart(
@@ -259,7 +260,7 @@ const updateCharts = (profile, fuel) => {
 			fill: "rgba(248, 113, 113, 0.1)",
 			data: profile.fuel,
 		},
-		profile.time,
+		time,
 		timeAxis,
 		{ beginAtZero: true, max: fuel },
 	);
@@ -272,7 +273,7 @@ const updateCharts = (profile, fuel) => {
 			fill: "rgba(251, 191, 36, 0.1)",
 			data: profile.thrust,
 		},
-		profile.time,
+		time,
 		timeAxis,
 		{ beginAtZero: true },
 	);
@@ -323,18 +324,21 @@ onMounted(() => {
 			>
 				<div>
 					<label
+						for="distance"
 						class="text-sm font-medium text-slate-400 mb-2 flex items-center gap-2"
 					>
 						<MoveRight class="w-4 h-4" /> Distance
 					</label>
 					<div class="flex gap-2">
 						<input
+							id="distance"
 							v-model.number="distance"
 							type="number"
 							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 outline-none"
 						/>
 						<select
 							v-model="distanceUnit"
+							aria-label="Distance unit"
 							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 outline-none"
 						>
 							<option v-for="(u, k) in UNITS.DISTANCE" :key="k" :value="k">
@@ -346,12 +350,14 @@ onMounted(() => {
 
 				<div>
 					<label
+						for="acceleration"
 						class="text-sm font-medium text-slate-400 mb-2 flex items-center gap-2"
 					>
 						<Zap class="w-4 h-4" /> Acceleration
 					</label>
 					<div class="flex gap-2">
 						<input
+							id="acceleration"
 							v-model.number="acceleration"
 							type="number"
 							step="0.1"
@@ -359,6 +365,7 @@ onMounted(() => {
 						/>
 						<select
 							v-model="accelerationUnit"
+							aria-label="Acceleration unit"
 							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 outline-none"
 						>
 							<option v-for="(u, k) in UNITS.ACCELERATION" :key="k" :value="k">
@@ -370,10 +377,13 @@ onMounted(() => {
 
 				<div class="grid grid-cols-2 gap-4">
 					<div>
-						<label class="text-sm font-medium text-slate-400 mb-2"
+						<label
+							for="flipTime"
+							class="block text-sm font-medium text-slate-400 mb-2"
 							>Flip Time</label
 						>
 						<select
+							id="flipTime"
 							v-model="flipTime"
 							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 w-full outline-none"
 						>
@@ -383,11 +393,14 @@ onMounted(() => {
 						</select>
 					</div>
 					<div>
-						<label class="text-sm font-medium text-slate-400 mb-2"
+						<label
+							for="coastingTime"
+							class="block text-sm font-medium text-slate-400 mb-2"
 							>Coasting Time</label
 						>
 						<div class="flex gap-2">
 							<input
+								id="coastingTime"
 								v-model.number="coastingTime"
 								type="number"
 								:disabled="autoCoast"
@@ -395,7 +408,9 @@ onMounted(() => {
 							/>
 							<select
 								v-model="coastingTimeUnit"
-								class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 outline-none text-xs"
+								:disabled="autoCoast"
+								aria-label="Coasting time unit"
+								class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 outline-none text-xs disabled:opacity-50"
 							>
 								<option v-for="(u, k) in UNITS.TIME" :key="k" :value="k">
 									{{ u.label[0].toUpperCase() }}
@@ -406,28 +421,36 @@ onMounted(() => {
 				</div>
 
 				<div>
-					<label
+					<h3
 						class="text-sm font-medium text-slate-400 mb-2 flex items-center gap-2"
 					>
 						<Database class="w-4 h-4" /> Ship Specification
-					</label>
+					</h3>
 					<div class="space-y-3">
 						<div class="flex gap-2">
 							<div class="w-1/2">
-								<p class="text-[10px] text-slate-500 uppercase mb-1">
+								<label
+									for="dryMass"
+									class="block text-[10px] text-slate-500 uppercase mb-1"
+								>
 									Dry Mass (t)
-								</p>
+								</label>
 								<input
+									id="dryMass"
 									v-model.number="dryMass"
 									type="number"
 									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-none"
 								/>
 							</div>
 							<div class="w-1/2">
-								<p class="text-[10px] text-slate-500 uppercase mb-1">
+								<label
+									for="fuelCapacity"
+									class="block text-[10px] text-slate-500 uppercase mb-1"
+								>
 									Fuel (t)
-								</p>
+								</label>
 								<input
+									id="fuelCapacity"
 									v-model.number="fuelCapacity"
 									type="number"
 									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-none"
@@ -436,21 +459,29 @@ onMounted(() => {
 						</div>
 						<div class="flex gap-2">
 							<div class="w-1/2">
-								<p class="text-[10px] text-slate-500 uppercase mb-1">
+								<label
+									for="cargoMass"
+									class="block text-[10px] text-slate-500 uppercase mb-1"
+								>
 									Cargo Mass (t)
-								</p>
+								</label>
 								<input
+									id="cargoMass"
 									v-model.number="cargoMass"
 									type="number"
 									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-none"
 								/>
 							</div>
 							<div class="w-1/2">
-								<p class="text-[10px] text-slate-500 uppercase mb-1">
+								<label
+									for="waitTime"
+									class="block text-[10px] text-slate-500 uppercase mb-1"
+								>
 									Wait Time
-								</p>
+								</label>
 								<div class="flex gap-1">
 									<input
+										id="waitTime"
 										v-model.number="waitTime"
 										type="number"
 										:disabled="!roundTrip"
@@ -458,6 +489,7 @@ onMounted(() => {
 									/>
 									<select
 										v-model="waitTimeUnit"
+										aria-label="Wait time unit"
 										:disabled="!roundTrip"
 										class="bg-slate-900 border border-slate-700 rounded-lg px-1 py-1 text-[10px] outline-none disabled:opacity-30"
 									>
@@ -514,12 +546,14 @@ onMounted(() => {
 
 				<div>
 					<label
+						for="efficiency"
 						class="text-sm font-medium text-slate-400 mb-2 flex items-center gap-2"
 					>
 						<Gauge class="w-4 h-4" /> Engine Efficiency
 					</label>
 					<div class="space-y-2">
 						<input
+							id="efficiency"
 							v-model.number="efficiency"
 							type="range"
 							min="0.1"
@@ -528,7 +562,7 @@ onMounted(() => {
 							class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
 						/>
 						<div class="flex justify-between text-xs text-slate-500">
-							<span>Fusion (10%)</span>
+							<span>0.1%</span>
 							<span class="text-blue-400 font-mono">{{ efficiency }}% c</span>
 							<span>Photon (100%)</span>
 						</div>
@@ -536,9 +570,7 @@ onMounted(() => {
 				</div>
 
 				<div>
-					<label class="text-sm font-medium text-slate-400 mb-3"
-						>Ship Presets</label
-					>
+					<h3 class="text-sm font-medium text-slate-400 mb-3">Ship Presets</h3>
 					<div class="flex flex-wrap gap-2">
 						<button
 							v-for="s in SHIP_PRESETS"
@@ -552,9 +584,9 @@ onMounted(() => {
 				</div>
 
 				<div>
-					<label class="text-sm font-medium text-slate-400 mb-3"
-						>Common Destinations</label
-					>
+					<h3 class="text-sm font-medium text-slate-400 mb-3">
+						Common Destinations
+					</h3>
 					<div class="flex flex-wrap gap-2">
 						<button
 							v-for="p in PRESETS"
@@ -588,7 +620,11 @@ onMounted(() => {
 							</h2>
 						</div>
 						<p class="text-xs text-slate-500 mt-4">
-							Time elapsed for a stationary observer at the destination.
+							{{
+								roundTrip
+									? "Time elapsed for a stationary observer back home."
+									: "Time elapsed for a stationary observer at the destination."
+							}}
 						</p>
 					</div>
 
@@ -740,28 +776,34 @@ onMounted(() => {
 
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					<div
-						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64"
+						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64 flex flex-col"
 					>
 						<div class="text-xs text-slate-500 mb-2 uppercase tracking-tighter">
 							Velocity Profile
 						</div>
-						<canvas ref="chartCanvas"></canvas>
+						<div class="relative flex-1 min-h-0">
+							<canvas ref="chartCanvas"></canvas>
+						</div>
 					</div>
 					<div
-						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64"
+						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64 flex flex-col"
 					>
 						<div class="text-xs text-slate-500 mb-2 uppercase tracking-tighter">
 							Fuel Consumption
 						</div>
-						<canvas ref="fuelChartCanvas"></canvas>
+						<div class="relative flex-1 min-h-0">
+							<canvas ref="fuelChartCanvas"></canvas>
+						</div>
 					</div>
 					<div
-						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64"
+						class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 h-64 flex flex-col"
 					>
 						<div class="text-xs text-slate-500 mb-2 uppercase tracking-tighter">
 							Engine Thrust
 						</div>
-						<canvas ref="thrustChartCanvas"></canvas>
+						<div class="relative flex-1 min-h-0">
+							<canvas ref="thrustChartCanvas"></canvas>
+						</div>
 					</div>
 				</div>
 
