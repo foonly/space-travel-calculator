@@ -310,7 +310,7 @@ onMounted(() => {
 	<div class="max-w-6xl mx-auto p-4 md:p-8">
 		<header class="mb-8 text-center">
 			<h1
-				class="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500 mb-2"
+				class="text-4xl font-bold bg-clip-text text-transparent bg-linear-to-r from-blue-400 to-indigo-500 mb-2"
 			>
 				Space Travel Calculator
 			</h1>
@@ -334,12 +334,12 @@ onMounted(() => {
 							id="distance"
 							v-model.number="distance"
 							type="number"
-							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 outline-none"
+							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 outline-hidden"
 						/>
 						<select
 							v-model="distanceUnit"
 							aria-label="Distance unit"
-							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 outline-none"
+							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 outline-hidden"
 						>
 							<option v-for="(u, k) in UNITS.DISTANCE" :key="k" :value="k">
 								{{ u.label }}
@@ -361,12 +361,12 @@ onMounted(() => {
 							v-model.number="acceleration"
 							type="number"
 							step="0.1"
-							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 outline-none"
+							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 outline-hidden"
 						/>
 						<select
 							v-model="accelerationUnit"
 							aria-label="Acceleration unit"
-							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 outline-none"
+							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 outline-hidden"
 						>
 							<option v-for="(u, k) in UNITS.ACCELERATION" :key="k" :value="k">
 								{{ u.label }}
@@ -385,7 +385,7 @@ onMounted(() => {
 						<select
 							id="flipTime"
 							v-model="flipTime"
-							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 w-full outline-none"
+							class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 w-full outline-hidden"
 						>
 							<option :value="10">Military (10s)</option>
 							<option :value="120">Standard (2m)</option>
@@ -404,13 +404,13 @@ onMounted(() => {
 								v-model.number="coastingTime"
 								type="number"
 								:disabled="autoCoast"
-								class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 w-full outline-none disabled:opacity-50"
+								class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 w-full outline-hidden disabled:opacity-50"
 							/>
 							<select
 								v-model="coastingTimeUnit"
 								:disabled="autoCoast"
 								aria-label="Coasting time unit"
-								class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 outline-none text-xs disabled:opacity-50"
+								class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 outline-hidden text-xs disabled:opacity-50"
 							>
 								<option v-for="(u, k) in UNITS.TIME" :key="k" :value="k">
 									{{ u.label[0].toUpperCase() }}
@@ -439,7 +439,7 @@ onMounted(() => {
 									id="dryMass"
 									v-model.number="dryMass"
 									type="number"
-									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-none"
+									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-hidden"
 								/>
 							</div>
 							<div class="w-1/2">
@@ -453,7 +453,7 @@ onMounted(() => {
 									id="fuelCapacity"
 									v-model.number="fuelCapacity"
 									type="number"
-									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-none"
+									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-hidden"
 								/>
 							</div>
 						</div>
@@ -469,7 +469,7 @@ onMounted(() => {
 									id="cargoMass"
 									v-model.number="cargoMass"
 									type="number"
-									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-none"
+									class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-hidden"
 								/>
 							</div>
 							<div class="w-1/2">
@@ -485,13 +485,13 @@ onMounted(() => {
 										v-model.number="waitTime"
 										type="number"
 										:disabled="!roundTrip"
-										class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-none disabled:opacity-30"
+										class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 w-full text-sm outline-hidden disabled:opacity-30"
 									/>
 									<select
 										v-model="waitTimeUnit"
 										aria-label="Wait time unit"
 										:disabled="!roundTrip"
-										class="bg-slate-900 border border-slate-700 rounded-lg px-1 py-1 text-[10px] outline-none disabled:opacity-30"
+										class="bg-slate-900 border border-slate-700 rounded-lg px-1 py-1 text-[10px] outline-hidden disabled:opacity-30"
 									>
 										<option v-for="(u, k) in UNITS.TIME" :key="k" :value="k">
 											{{ u.label[0].toUpperCase() }}
@@ -506,7 +506,7 @@ onMounted(() => {
 									type="checkbox"
 									v-model="autoCoast"
 									id="autoCoast"
-									class="rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-0"
+									class="rounded-sm border-slate-700 bg-slate-900 text-blue-500 focus:ring-0"
 								/>
 								<label
 									for="autoCoast"
@@ -519,7 +519,7 @@ onMounted(() => {
 									type="checkbox"
 									v-model="roundTrip"
 									id="roundTrip"
-									class="rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-0"
+									class="rounded-sm border-slate-700 bg-slate-900 text-blue-500 focus:ring-0"
 								/>
 								<label
 									for="roundTrip"
@@ -532,7 +532,7 @@ onMounted(() => {
 									type="checkbox"
 									v-model="ignoreFuelMass"
 									id="ignoreFuelMass"
-									class="rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-0"
+									class="rounded-sm border-slate-700 bg-slate-900 text-blue-500 focus:ring-0"
 								/>
 								<label
 									for="ignoreFuelMass"
@@ -551,7 +551,7 @@ onMounted(() => {
 					>
 						<Gauge class="w-4 h-4" /> Engine Efficiency
 					</label>
-					<div class="space-y-2">
+					<div>
 						<input
 							id="efficiency"
 							v-model.number="efficiency"
@@ -561,7 +561,7 @@ onMounted(() => {
 							step="0.1"
 							class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
 						/>
-						<div class="flex justify-between text-xs text-slate-500">
+						<div class="mt-2 flex justify-between text-xs text-slate-500">
 							<span>0.1%</span>
 							<span class="text-blue-400 font-mono">{{ efficiency }}% c</span>
 							<span>Photon (100%)</span>
@@ -733,7 +733,7 @@ onMounted(() => {
 								<Gauge class="w-4 h-4" /> Max Velocity
 							</p>
 							<span
-								class="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded"
+								class="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded-sm"
 							>
 								γ =
 								{{
