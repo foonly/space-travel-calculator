@@ -1,20 +1,20 @@
 <script setup>
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, watch, onMounted } from "vue";
 import {
-	calculateTravel,
+	planMission,
+	missionProfile,
 	UNITS,
 	formatDuration,
 	formatDistance,
 	C,
-	G,
 } from "./logic/physics";
+import { isValid, requiredNumber, optionalNumber } from "./logic/inputs";
 import { PRESETS, SHIP_PRESETS } from "./logic/presets";
 import {
 	Rocket,
 	Clock,
 	Gauge,
 	MoveRight,
-	Info,
 	Zap,
 	Database,
 	Fuel,
@@ -39,21 +39,13 @@ const roundTrip = ref(false);
 const ignoreFuelMass = ref(false);
 
 const results = ref(null);
+const errorMessage = ref("");
 const chartCanvas = ref(null);
 const fuelChartCanvas = ref(null);
 const thrustChartCanvas = ref(null);
 let chart = null;
 let fuelChart = null;
 let thrustChart = null;
-
-const errorMessage = ref("");
-
-const isValid = (val) =>
-	val !== null && val !== undefined && !isNaN(val) && val !== "";
-
-// v-model.number yields "" for an empty field, which would turn `+` into string concatenation
-const requiredNumber = (val) => (isValid(val) ? Number(val) : NaN);
-const optionalNumber = (val) => (isValid(val) ? Number(val) : 0);
 
 const destroyCharts = () => {
 	chart?.destroy();
@@ -68,6 +60,14 @@ const clearResults = (message) => {
 	results.value = null;
 	errorMessage.value = message;
 	destroyCharts();
+};
+
+// Show an auto-calculated coasting time in the largest unit it exceeds
+const showCoastingTime = (seconds) => {
+	const unit =
+		["Y", "D", "H", "M"].find((k) => seconds > UNITS.TIME[k].factor) ?? "S";
+	coastingTimeUnit.value = unit;
+	coastingTime.value = seconds / UNITS.TIME[unit].factor;
 };
 
 const calculate = () => {
@@ -99,94 +99,38 @@ const calculate = () => {
 		return;
 	}
 
-	const dMeters = d * UNITS.DISTANCE[distanceUnit.value].factor;
-	const aMs2 = a * UNITS.ACCELERATION[accelerationUnit.value].factor;
-	const vExhaust = (eff / 100) * C;
-	const totalDryMass = mDry + mCargo;
+	const params = {
+		distance: d * UNITS.DISTANCE[distanceUnit.value].factor,
+		acceleration: a * UNITS.ACCELERATION[accelerationUnit.value].factor,
+		exhaustVelocity: (eff / 100) * C,
+		dryMass: mDry + mCargo,
+		fuelCapacity: fuel,
+		coastTime: tCoast * UNITS.TIME[coastingTimeUnit.value].factor,
+		flipTime: tFlip,
+		waitTime: tWait * UNITS.TIME[waitTimeUnit.value].factor,
+		autoCoast: autoCoast.value,
+		roundTrip: roundTrip.value,
+		ignoreFuelMass: ignoreFuelMass.value,
+	};
 
-	let tCoastSeconds = tCoast * UNITS.TIME[coastingTimeUnit.value].factor;
-
-	if (autoCoast.value) {
-		const segments = roundTrip.value ? 4 : 2;
-		let maxTotalProperAccelTime;
-
-		if (ignoreFuelMass.value) {
-			// Linear fuel consumption: m_fuel = (m_dry * a * tau) / v_e
-			// tau = (m_fuel * v_e) / (m_dry * a)
-			maxTotalProperAccelTime = (fuel * vExhaust) / (totalDryMass * aMs2);
-		} else {
-			// Relativistic rocket equation: tau = (v_e / a) * ln(m0 / m1)
-			maxTotalProperAccelTime =
-				(vExhaust / aMs2) * Math.log((totalDryMass + fuel) / totalDryMass);
-		}
-
-		const tau1 = maxTotalProperAccelTime / segments;
-		const v1 = C * Math.tanh((aMs2 * tau1) / C);
-
-		const maxDistAccelOnly =
-			2 * (C ** 2 / aMs2) * (Math.cosh((aMs2 * tau1) / C) - 1) + v1 * tFlip;
-
-		if (maxDistAccelOnly >= dMeters) {
-			tCoastSeconds = 0;
-			coastingTime.value = 0;
-		} else if (v1 <= 0) {
+	try {
+		const res = planMission(params);
+		if (!res) {
 			clearResults(
 				"Not enough fuel to accelerate. Add fuel or turn off auto-coasting.",
 			);
 			return;
-		} else {
-			const xRemainder = dMeters - maxDistAccelOnly;
-			tCoastSeconds = xRemainder / v1;
-
-			// Switch unit automatically based on magnitude
-			if (tCoastSeconds > 31557600) coastingTimeUnit.value = "Y";
-			else if (tCoastSeconds > 86400) coastingTimeUnit.value = "D";
-			else if (tCoastSeconds > 3600) coastingTimeUnit.value = "H";
-			else if (tCoastSeconds > 60) coastingTimeUnit.value = "M";
-			else coastingTimeUnit.value = "S";
-
-			coastingTime.value =
-				tCoastSeconds / UNITS.TIME[coastingTimeUnit.value].factor;
-		}
-	}
-
-	try {
-		const res = calculateTravel(dMeters, aMs2, tCoastSeconds, tFlip);
-
-		// Override mass ratio with user efficiency and segments
-		const segments = roundTrip.value ? 4 : 2;
-		const totalProperAccelTime = segments * res.accelPhase.properTime;
-
-		if (ignoreFuelMass.value) {
-			// Linear consumption: mass is constant, so fuel is proportional to work/impulse
-			res.fuelUsed = (totalDryMass * aMs2 * totalProperAccelTime) / vExhaust;
-			res.massRatio = 1 + res.fuelUsed / totalDryMass;
-			res.fuelRemaining = Math.max(0, fuel - res.fuelUsed);
-		} else {
-			// Exponential consumption (Rocket Equation)
-			res.massRatio = Math.exp((aMs2 * totalProperAccelTime) / vExhaust);
-			// Minimum fuel needed if only that much were loaded
-			res.fuelUsed = totalDryMass * (res.massRatio - 1);
-			// What is left when flying with full tanks, whose extra mass costs fuel too
-			res.fuelRemaining = Math.max(
-				0,
-				(totalDryMass + fuel) / res.massRatio - totalDryMass,
-			);
 		}
 
-		res.fuelWarning = res.fuelUsed > fuel + 0.01;
-
-		if (roundTrip.value) {
-			const tWaitSeconds = tWait * UNITS.TIME[waitTimeUnit.value].factor;
-			res.totalProperTime = res.totalProperTime * 2 + tWaitSeconds;
-			res.totalCoordTime = res.totalCoordTime * 2 + tWaitSeconds;
-			res.totalDistance = dMeters * 2;
-			res.waitTimeSeconds = tWaitSeconds;
+		if (autoCoast.value) {
+			if (res.coastPhase.coordTime > 0)
+				showCoastingTime(res.coastPhase.coordTime);
+			else coastingTime.value = 0;
 		}
 
 		errorMessage.value = "";
 		results.value = res;
-		updateChart({ aMs2, vExhaust, totalDryMass, fuel });
+		updateCharts(missionProfile(res, params), fuel);
 	} catch (e) {
 		console.error(e);
 	}
@@ -195,7 +139,6 @@ const calculate = () => {
 const setPreset = (preset) => {
 	distance.value = preset.distance;
 	distanceUnit.value = preset.unit;
-	calculate();
 };
 
 const setShipPreset = (ship) => {
@@ -206,342 +149,133 @@ const setShipPreset = (ship) => {
 	accelerationUnit.value = "G";
 	flipTime.value = ship.flip;
 	autoCoast.value = true;
-	calculate();
 };
 
-const updateChart = ({
-	aMs2: a,
-	vExhaust,
-	totalDryMass: totalDryMassValue,
-	fuel: startFuel,
-}) => {
-	if (
-		!chartCanvas.value ||
-		!fuelChartCanvas.value ||
-		!thrustChartCanvas.value ||
-		!results.value
-	)
+const formatValue = (n) =>
+	n.toLocaleString(undefined, { maximumSignificantDigits: 3 });
+
+const makeLineChart = (
+	canvas,
+	{ label, unit, color, fill, data },
+	time,
+	timeAxis,
+	yOptions = {},
+) =>
+	new Chart(canvas, {
+		type: "line",
+		data: {
+			labels: time,
+			datasets: [
+				{
+					label: `${label} (${unit})`,
+					data,
+					borderColor: color,
+					backgroundColor: fill,
+					fill: true,
+					pointRadius: 0,
+					borderWidth: 2,
+					tension: 0.1,
+				},
+			],
+		},
+		options: {
+			responsive: true,
+			maintainAspectRatio: false,
+			scales: {
+				x: {
+					type: "linear",
+					display: true,
+					title: {
+						display: true,
+						text: `Time (${timeAxis.unit})`,
+						color: "#94a3b8",
+					},
+					ticks: {
+						color: "#64748b",
+						callback: (val) => (val / timeAxis.divisor).toFixed(1),
+					},
+					grid: { color: "rgba(255,255,255,0.05)" },
+				},
+				y: {
+					display: true,
+					title: {
+						display: true,
+						text: `${label} (${unit})`,
+						color: "#94a3b8",
+					},
+					ticks: { color: "#64748b" },
+					grid: { color: "rgba(255,255,255,0.05)" },
+					...yOptions,
+				},
+			},
+			plugins: {
+				legend: { display: false },
+				tooltip: {
+					callbacks: {
+						label: (context) =>
+							`${label}: ${formatValue(context.parsed.y)} ${unit}`,
+						title: (items) =>
+							`Time: ${(items[0].parsed.x / timeAxis.divisor).toFixed(2)} ${timeAxis.unit}`,
+					},
+				},
+			},
+		},
+	});
+
+const updateCharts = (profile, fuel) => {
+	if (!chartCanvas.value || !fuelChartCanvas.value || !thrustChartCanvas.value)
 		return;
 
-	const res = results.value;
-	const vData = [];
-	const fData = [];
-	const tData = [];
-	const labels = [];
+	destroyCharts();
 
-	// Ship mass is constant when fuel mass is ignored, otherwise it starts with full tanks
-	const massAtStart = ignoreFuelMass.value
-		? totalDryMassValue
-		: totalDryMassValue + startFuel;
+	const maxT = profile.time[profile.time.length - 1];
+	const timeAxis =
+		maxT > UNITS.TIME.Y.factor
+			? { unit: "y", divisor: UNITS.TIME.Y.factor }
+			: maxT > UNITS.TIME.D.factor
+				? { unit: "d", divisor: UNITS.TIME.D.factor }
+				: maxT > UNITS.TIME.H.factor
+					? { unit: "h", divisor: UNITS.TIME.H.factor }
+					: { unit: "s", divisor: 1 };
 
-	const addPoint = (tCoord, v, m, fuelUsed, thrust = 0) => {
-		labels.push(tCoord);
-		vData.push(v / 1000);
-		fData.push(startFuel - fuelUsed);
-		tData.push(thrust);
-	};
-
-	const generateLeg = (startTimeCoord, startMass, startFuelUsed) => {
-		let m = startMass;
-		let fUsed = startFuelUsed;
-		let tBase = startTimeCoord;
-
-		// Accel
-		const steps = 50;
-		for (let i = 0; i <= steps; i++) {
-			const stepFraction = i / steps;
-			const tCoord = stepFraction * res.accelPhase.coordTime;
-			const tProper = stepFraction * res.accelPhase.properTime;
-			const v = (a * tCoord) / Math.sqrt(1 + ((a * tCoord) / C) ** 2);
-
-			let mNow, fuelDelta;
-			if (ignoreFuelMass.value) {
-				mNow = totalDryMassValue;
-				fuelDelta = (totalDryMassValue * a * tProper) / vExhaust;
-			} else {
-				mNow = startMass * Math.exp((-a * tProper) / vExhaust);
-				fuelDelta = startMass - mNow;
-			}
-
-			addPoint(
-				tBase + tCoord,
-				v,
-				mNow,
-				startFuelUsed + fuelDelta,
-				(mNow * a) / 1000,
-			);
-			m = mNow;
-			fUsed = startFuelUsed + fuelDelta;
-		}
-
-		tBase += res.accelPhase.coordTime;
-		const massAfterAccel = m;
-		const fuelAfterAccel = fUsed;
-
-		// Flip
-		if (res.flipPhase.coordTime > 0) {
-			tBase += res.flipPhase.coordTime;
-			addPoint(tBase, res.maxSpeed, massAfterAccel, fuelAfterAccel, 0);
-		}
-
-		// Coast
-		if (res.coastPhase.coordTime > 0) {
-			tBase += res.coastPhase.coordTime;
-			addPoint(tBase, res.maxSpeed, massAfterAccel, fuelAfterAccel, 0);
-		}
-
-		// Decel
-		const fuelAtDecelStart = fuelAfterAccel;
-		const massAtDecelStart = massAfterAccel;
-
-		for (let i = 1; i <= steps; i++) {
-			const stepFraction = i / steps;
-			const tCoord = stepFraction * res.decelPhase.coordTime;
-			const tProper = stepFraction * res.decelPhase.properTime;
-			const tReverse = res.decelPhase.coordTime - tCoord;
-			const v = (a * tReverse) / Math.sqrt(1 + ((a * tReverse) / C) ** 2);
-
-			let mNow, fuelDelta;
-			if (ignoreFuelMass.value) {
-				mNow = totalDryMassValue;
-				fuelDelta = (totalDryMassValue * a * tProper) / vExhaust;
-			} else {
-				mNow = massAtDecelStart * Math.exp((-a * tProper) / vExhaust);
-				fuelDelta = massAtDecelStart - mNow;
-			}
-
-			addPoint(
-				tBase + tCoord,
-				v,
-				mNow,
-				fuelAtDecelStart + fuelDelta,
-				(mNow * a) / 1000,
-			);
-			m = mNow;
-			fUsed = fuelAtDecelStart + fuelDelta;
-		}
-
-		return {
-			endCoord: tBase + res.decelPhase.coordTime,
-			endMass: m,
-			endFuelUsed: fUsed,
-		};
-	};
-
-	// Outbound
-	const leg1 = generateLeg(0, massAtStart, 0);
-
-	// Wait Time
-	let currentT = leg1.endCoord;
-	let currentM = leg1.endMass;
-	let currentF = leg1.endFuelUsed;
-	if (roundTrip.value && res.waitTimeSeconds > 0) {
-		currentT += res.waitTimeSeconds;
-		addPoint(currentT, 0, currentM, currentF, 0);
-	}
-
-	// Return
-	if (roundTrip.value) {
-		generateLeg(currentT, currentM, currentF);
-	}
-
-	if (chart) chart.destroy();
-	if (fuelChart) fuelChart.destroy();
-	if (thrustChart) thrustChart.destroy();
-
-	const maxT = labels[labels.length - 1];
-	let timeUnit = "s";
-	let divisor = 1;
-	if (maxT > 31557600) {
-		timeUnit = "y";
-		divisor = 31557600;
-	} else if (maxT > 86400) {
-		timeUnit = "d";
-		divisor = 86400;
-	} else if (maxT > 3600) {
-		timeUnit = "h";
-		divisor = 3600;
-	}
-
-	// Velocity Chart
-	chart = new Chart(chartCanvas.value, {
-		type: "line",
-		data: {
-			labels: labels,
-			datasets: [
-				{
-					label: "Velocity (km/s)",
-					data: vData,
-					borderColor: "#38bdf8",
-					backgroundColor: "rgba(56, 189, 248, 0.1)",
-					fill: true,
-					pointRadius: 0,
-					borderWidth: 2,
-					tension: 0.1,
-				},
-			],
+	chart = makeLineChart(
+		chartCanvas.value,
+		{
+			label: "Velocity",
+			unit: "km/s",
+			color: "#38bdf8",
+			fill: "rgba(56, 189, 248, 0.1)",
+			data: profile.velocity,
 		},
-		options: {
-			responsive: true,
-			maintainAspectRatio: false,
-			scales: {
-				x: {
-					type: "linear",
-					display: true,
-					title: {
-						display: true,
-						text: `Time (${timeUnit})`,
-						color: "#94a3b8",
-					},
-					ticks: {
-						color: "#64748b",
-						callback: (val) => (val / divisor).toFixed(1),
-					},
-					grid: { color: "rgba(255,255,255,0.05)" },
-				},
-				y: {
-					display: true,
-					title: { display: true, text: "Velocity (km/s)", color: "#94a3b8" },
-					ticks: { color: "#64748b" },
-					grid: { color: "rgba(255,255,255,0.05)" },
-				},
-			},
-			plugins: {
-				legend: { display: false },
-				tooltip: {
-					callbacks: {
-						label: (context) =>
-							`Velocity: ${context.parsed.y.toLocaleString(undefined, {
-								maximumSignificantDigits: 3,
-							})} km/s`,
-						title: (items) =>
-							`Time: ${(items[0].parsed.x / divisor).toFixed(2)} ${timeUnit}`,
-					},
-				},
-			},
+		profile.time,
+		timeAxis,
+	);
+	fuelChart = makeLineChart(
+		fuelChartCanvas.value,
+		{
+			label: "Fuel",
+			unit: "t",
+			color: "#f87171",
+			fill: "rgba(248, 113, 113, 0.1)",
+			data: profile.fuel,
 		},
-	});
-
-	// Fuel Chart
-	fuelChart = new Chart(fuelChartCanvas.value, {
-		type: "line",
-		data: {
-			labels: labels,
-			datasets: [
-				{
-					label: "Fuel Remaining (t)",
-					data: fData,
-					borderColor: "#f87171",
-					backgroundColor: "rgba(248, 113, 113, 0.1)",
-					fill: true,
-					pointRadius: 0,
-					borderWidth: 2,
-					tension: 0.1,
-				},
-			],
+		profile.time,
+		timeAxis,
+		{ beginAtZero: true, max: fuel },
+	);
+	thrustChart = makeLineChart(
+		thrustChartCanvas.value,
+		{
+			label: "Thrust",
+			unit: "MN",
+			color: "#fbbf24",
+			fill: "rgba(251, 191, 36, 0.1)",
+			data: profile.thrust,
 		},
-		options: {
-			responsive: true,
-			maintainAspectRatio: false,
-			scales: {
-				x: {
-					type: "linear",
-					display: true,
-					title: {
-						display: true,
-						text: `Time (${timeUnit})`,
-						color: "#94a3b8",
-					},
-					ticks: {
-						color: "#64748b",
-						callback: (val) => (val / divisor).toFixed(1),
-					},
-					grid: { color: "rgba(255,255,255,0.05)" },
-				},
-				y: {
-					display: true,
-					title: { display: true, text: "Fuel (t)", color: "#94a3b8" },
-					ticks: { color: "#64748b" },
-					grid: { color: "rgba(255,255,255,0.05)" },
-					beginAtZero: true,
-					max: startFuel,
-				},
-			},
-			plugins: {
-				legend: { display: false },
-				tooltip: {
-					callbacks: {
-						label: (context) =>
-							`Fuel: ${context.parsed.y.toLocaleString(undefined, {
-								maximumSignificantDigits: 3,
-							})} t`,
-						title: (items) =>
-							`Time: ${(items[0].parsed.x / divisor).toFixed(2)} ${timeUnit}`,
-					},
-				},
-			},
-		},
-	});
-
-	// Thrust Chart
-	thrustChart = new Chart(thrustChartCanvas.value, {
-		type: "line",
-		data: {
-			labels: labels,
-			datasets: [
-				{
-					label: "Thrust (MN)",
-					data: tData,
-					borderColor: "#fbbf24",
-					backgroundColor: "rgba(251, 191, 36, 0.1)",
-					fill: true,
-					pointRadius: 0,
-					borderWidth: 2,
-					tension: 0.1,
-				},
-			],
-		},
-		options: {
-			responsive: true,
-			maintainAspectRatio: false,
-			scales: {
-				x: {
-					type: "linear",
-					display: true,
-					title: {
-						display: true,
-						text: `Time (${timeUnit})`,
-						color: "#94a3b8",
-					},
-					ticks: {
-						color: "#64748b",
-						callback: (val) => (val / divisor).toFixed(1),
-					},
-					grid: { color: "rgba(255,255,255,0.05)" },
-				},
-				y: {
-					display: true,
-					title: { display: true, text: "Thrust (MN)", color: "#94a3b8" },
-					ticks: { color: "#64748b" },
-					grid: { color: "rgba(255,255,255,0.05)" },
-					beginAtZero: true,
-				},
-			},
-			plugins: {
-				legend: { display: false },
-				tooltip: {
-					callbacks: {
-						label: (context) =>
-							`Thrust: ${context.parsed.y.toLocaleString(undefined, {
-								maximumSignificantDigits: 3,
-							})} MN`,
-						title: (items) =>
-							`Time: ${(items[0].parsed.x / divisor).toFixed(2)} ${timeUnit}`,
-					},
-				},
-			},
-		},
-	});
+		profile.time,
+		timeAxis,
+		{ beginAtZero: true },
+	);
 };
 
 watch(

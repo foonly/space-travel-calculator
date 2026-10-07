@@ -69,14 +69,6 @@ export function calculateTravel(D, a, tCoastCoord = 0, tFlip = 120) {
 	const totalProperTime = 2 * tau1 + tauCoast + tFlip;
 	const totalCoordTime = 2 * t1 + tCoastCoord + tFlip;
 
-	// Mass ratio calculation (assuming constant proper acceleration)
-	// m0/m1 = exp(a * delta_tau / v_e)
-	// delta_tau is the total proper time of acceleration + deceleration
-	const deltaTauAccelDecel = 2 * tau1;
-	const efficiency = 0.1; // Default 10% of c for advanced fusion
-	const vExhaust = efficiency * C;
-	const massRatio = Math.exp((a * deltaTauAccelDecel) / vExhaust);
-
 	return {
 		accelPhase: {
 			properTime: tau1,
@@ -104,44 +96,200 @@ export function calculateTravel(D, a, tCoastCoord = 0, tFlip = 120) {
 		totalCoordTime,
 		totalDistance: D,
 		maxGamma: gamma,
-		massRatio,
 	};
 }
 
+// Mission parameters shared by the functions below. SI units, masses in tonnes:
+// { distance, acceleration, exhaustVelocity, dryMass (ship + cargo), fuelCapacity,
+//   coastTime, flipTime, waitTime, autoCoast, roundTrip, ignoreFuelMass }
+
+// Total proper time the engine can burn before the tanks run dry
+export function maxBurnTime({
+	acceleration: a,
+	exhaustVelocity: vE,
+	dryMass,
+	fuelCapacity,
+	ignoreFuelMass,
+}) {
+	if (ignoreFuelMass) {
+		// Linear fuel consumption: m_fuel = (m_dry * a * tau) / v_e
+		return (fuelCapacity * vE) / (dryMass * a);
+	}
+	// Relativistic rocket equation: tau = (v_e / a) * ln(m0 / m1)
+	return (vE / a) * Math.log((dryMass + fuelCapacity) / dryMass);
+}
+
+// Coasting time needed when each burn segment is limited to tau1.
+// Returns null when the ship cannot accelerate at all.
+export function solveCoastTime(distance, a, flipTime, tau1) {
+	const v1 = C * Math.tanh((a * tau1) / C);
+	const maxDistAccelOnly =
+		2 * (C ** 2 / a) * (Math.cosh((a * tau1) / C) - 1) + v1 * flipTime;
+
+	if (maxDistAccelOnly >= distance) return 0;
+	if (v1 <= 0) return null;
+	return (distance - maxDistAccelOnly) / v1;
+}
+
+export function fuelUsage(
+	{
+		acceleration: a,
+		exhaustVelocity: vE,
+		dryMass,
+		fuelCapacity,
+		ignoreFuelMass,
+	},
+	burnTime,
+) {
+	let fuelUsed, massRatio, fuelRemaining;
+
+	if (ignoreFuelMass) {
+		// Linear consumption: mass is constant, so fuel is proportional to work/impulse
+		fuelUsed = (dryMass * a * burnTime) / vE;
+		massRatio = 1 + fuelUsed / dryMass;
+		fuelRemaining = Math.max(0, fuelCapacity - fuelUsed);
+	} else {
+		// Exponential consumption (Rocket Equation)
+		massRatio = Math.exp((a * burnTime) / vE);
+		// Minimum fuel needed if only that much were loaded
+		fuelUsed = dryMass * (massRatio - 1);
+		// What is left when flying with full tanks, whose extra mass costs fuel too
+		fuelRemaining = Math.max(0, (dryMass + fuelCapacity) / massRatio - dryMass);
+	}
+
+	return {
+		fuelUsed,
+		massRatio,
+		fuelRemaining,
+		fuelWarning: fuelUsed > fuelCapacity + 0.01,
+	};
+}
+
+// Full mission results. Returns null when auto-coasting cannot reach the destination.
+export function planMission(params) {
+	const { distance, acceleration, flipTime, roundTrip, autoCoast } = params;
+	const segments = roundTrip ? 4 : 2;
+
+	let coastTime = params.coastTime ?? 0;
+	if (autoCoast) {
+		coastTime = solveCoastTime(
+			distance,
+			acceleration,
+			flipTime,
+			maxBurnTime(params) / segments,
+		);
+		if (coastTime === null) return null;
+	}
+
+	const res = calculateTravel(distance, acceleration, coastTime, flipTime);
+	Object.assign(res, fuelUsage(params, segments * res.accelPhase.properTime));
+
+	if (roundTrip) {
+		const waitTime = params.waitTime ?? 0;
+		res.totalProperTime = res.totalProperTime * 2 + waitTime;
+		res.totalCoordTime = res.totalCoordTime * 2 + waitTime;
+		res.totalDistance = distance * 2;
+		res.waitTimeSeconds = waitTime;
+	}
+
+	return res;
+}
+
+// Time series for the charts: time (s), velocity (km/s), fuel (t) and thrust (MN)
+export function missionProfile(res, params, steps = 50) {
+	const {
+		acceleration: a,
+		exhaustVelocity: vE,
+		dryMass,
+		fuelCapacity,
+		roundTrip,
+		ignoreFuelMass,
+	} = params;
+	const { accelPhase, flipPhase, coastPhase, decelPhase, maxSpeed } = res;
+
+	// Ship mass is constant when fuel mass is ignored, otherwise it starts with full tanks
+	const m0 = ignoreFuelMass ? dryMass : dryMass + fuelCapacity;
+	const massAfter = (tauBurned) =>
+		ignoreFuelMass ? dryMass : m0 * Math.exp((-a * tauBurned) / vE);
+	const fuelUsedAfter = (tauBurned) =>
+		ignoreFuelMass ? (dryMass * a * tauBurned) / vE : m0 - massAfter(tauBurned);
+	// Speed at coordinate time t into a burn from rest
+	const speedAt = (t) => (a * t) / Math.sqrt(1 + ((a * t) / C) ** 2);
+
+	const profile = { time: [], velocity: [], fuel: [], thrust: [] };
+	const addPoint = (t, v, tauBurned, burning) => {
+		profile.time.push(t);
+		profile.velocity.push(v / 1000);
+		profile.fuel.push(fuelCapacity - fuelUsedAfter(tauBurned));
+		profile.thrust.push(burning ? (massAfter(tauBurned) * a) / 1000 : 0);
+	};
+
+	let t = 0;
+	let tau = 0;
+
+	const addLeg = () => {
+		for (let i = 0; i <= steps; i++) {
+			const f = i / steps;
+			addPoint(
+				t + f * accelPhase.coordTime,
+				speedAt(f * accelPhase.coordTime),
+				tau + f * accelPhase.properTime,
+				true,
+			);
+		}
+		t += accelPhase.coordTime;
+		tau += accelPhase.properTime;
+
+		if (flipPhase.coordTime > 0) {
+			t += flipPhase.coordTime;
+			addPoint(t, maxSpeed, tau, false);
+		}
+		if (coastPhase.coordTime > 0) {
+			t += coastPhase.coordTime;
+			addPoint(t, maxSpeed, tau, false);
+		}
+
+		for (let i = 1; i <= steps; i++) {
+			const f = i / steps;
+			addPoint(
+				t + f * decelPhase.coordTime,
+				speedAt((1 - f) * decelPhase.coordTime),
+				tau + f * decelPhase.properTime,
+				true,
+			);
+		}
+		t += decelPhase.coordTime;
+		tau += decelPhase.properTime;
+	};
+
+	addLeg();
+	if (roundTrip) {
+		if (res.waitTimeSeconds > 0) {
+			t += res.waitTimeSeconds;
+			addPoint(t, 0, tau, false);
+		}
+		addLeg();
+	}
+
+	return profile;
+}
+
+const formatNumber = (n) =>
+	n.toLocaleString(undefined, { maximumSignificantDigits: 3 });
+
 export function formatDuration(seconds) {
-	if (seconds < 60)
-		return `${seconds.toLocaleString(undefined, {
-			maximumSignificantDigits: 3,
-		})}s`;
-	if (seconds < 3600)
-		return `${(seconds / 60).toLocaleString(undefined, {
-			maximumSignificantDigits: 3,
-		})}m`;
-	if (seconds < 86400)
-		return `${(seconds / 3600).toLocaleString(undefined, {
-			maximumSignificantDigits: 3,
-		})}h`;
-	if (seconds < 31557600)
-		return `${(seconds / 86400).toLocaleString(undefined, {
-			maximumSignificantDigits: 3,
-		})}d`;
-	return `${(seconds / 31557600).toLocaleString(undefined, {
-		maximumSignificantDigits: 3,
-	})}y`;
+	const { M, H, D, Y } = UNITS.TIME;
+	if (seconds < M.factor) return `${formatNumber(seconds)}s`;
+	if (seconds < H.factor) return `${formatNumber(seconds / M.factor)}m`;
+	if (seconds < D.factor) return `${formatNumber(seconds / H.factor)}h`;
+	if (seconds < Y.factor) return `${formatNumber(seconds / D.factor)}d`;
+	return `${formatNumber(seconds / Y.factor)}y`;
 }
 
 export function formatDistance(meters) {
-	if (meters < 1000)
-		return `${meters.toLocaleString(undefined, { maximumSignificantDigits: 3 })}m`;
-	if (meters < 1.5e11)
-		return `${(meters / 1000).toLocaleString(undefined, {
-			maximumSignificantDigits: 3,
-		})}km`;
-	if (meters < 9.46e15)
-		return `${(meters / 1.496e11).toLocaleString(undefined, {
-			maximumSignificantDigits: 3,
-		})} AU`;
-	return `${(meters / 9.461e15).toLocaleString(undefined, {
-		maximumSignificantDigits: 3,
-	})} ly`;
+	const { KM, AU, LY } = UNITS.DISTANCE;
+	if (meters < KM.factor) return `${formatNumber(meters)}m`;
+	if (meters < AU.factor) return `${formatNumber(meters / KM.factor)}km`;
+	if (meters < LY.factor) return `${formatNumber(meters / AU.factor)} AU`;
+	return `${formatNumber(meters / LY.factor)} ly`;
 }
