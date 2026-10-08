@@ -1,6 +1,27 @@
 # Changelog
 
-## 1.3.0 (2026-07-02)
+### 1.3.1 (2026-10-08)
+
+#### Bug Fixes
+
+- ui: improve labels, charts, favicon and destination presets (277cf26)
+- app: validate number inputs and correct fuel and round-trip results (413020c)
+
+#### Refactor
+
+- app: move mission physics into physics.js and add tests (f977ff5)
+
+#### Build System
+
+- deps: upgrade to Tailwind CSS 4 (612ca69)
+- deps: upgrade Vite, Vitest and switch to @lucide/vue (45e0b75)
+
+#### Continuous Integration
+
+- github: update actions and Node, serialize releases (84a0e3f)
+- github: run tests before releasing (47932d1)
+
+## v1.3.0 (2026-07-02)
 
 #### Features
 
